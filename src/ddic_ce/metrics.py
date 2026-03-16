@@ -14,6 +14,11 @@ def summarize_plane(
     low_percentile: float = 2.0,
     high_percentile: float = 98.0,
 ) -> dict[str, float]:
+    """汇总单个灰度平面的统计指标。
+
+    输出覆盖基础亮度统计、动态范围、信息熵、百分位，以及暗区/亮区像素占比，
+    适合用于算法前后效果对比或时域稳定性分析。
+    """
     values = np.asarray(plane, dtype=np.uint8)
     flat = values.reshape(-1).astype(np.float64)
     hist = np.bincount(values.reshape(-1), minlength=256).astype(np.float64)
@@ -34,12 +39,18 @@ def summarize_plane(
 
 
 def compute_ambe(before: np.ndarray, after: np.ndarray) -> float:
+    """计算 AMBE，即增强前后平均亮度偏移的绝对值。"""
     before_values = np.asarray(before, dtype=np.float64)
     after_values = np.asarray(after, dtype=np.float64)
     return float(abs(np.mean(after_values) - np.mean(before_values)))
 
 
 def compute_eme(plane: np.ndarray, *, block_size: int = 8, epsilon: float = 1.0) -> float:
+    """计算 EME，对局部块对比度进行分块评估。
+
+    图像会按 `block_size` 划分为小块，分别计算 `20*log10(max/min)` 形式的
+    局部对比度分数，再取平均；`epsilon` 用于避免极小值导致的数值不稳定。
+    """
     values = np.asarray(plane, dtype=np.uint8)
     height, width = values.shape
     scores: list[float] = []
@@ -58,6 +69,7 @@ def compute_eme(plane: np.ndarray, *, block_size: int = 8, epsilon: float = 1.0)
 
 
 def summarize_lut(lut: Iterable[int], *, prev_lut: Iterable[int] | None = None) -> dict[str, float]:
+    """汇总 LUT 的单调性、覆盖范围及相邻帧变化量。"""
     lut_values = np.asarray(list(lut), dtype=np.float64)
     monotonic = float(np.all(np.diff(lut_values) >= 0))
     summary = {
@@ -82,6 +94,7 @@ def summarize_temporal_change(
     prev_lut: Iterable[int],
     curr_lut: Iterable[int],
 ) -> dict[str, float]:
+    """汇总相邻两帧图像和 LUT 的时域变化幅度。"""
     prev_values = np.asarray(prev_plane, dtype=np.float64)
     curr_values = np.asarray(curr_plane, dtype=np.float64)
     frame_delta = np.abs(curr_values - prev_values)

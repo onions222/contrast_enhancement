@@ -13,6 +13,7 @@ SUPPORTED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp"}
 
 
 def _write_lut_csv(path: Path, lut: list[int]) -> None:
+    """把单张图像对应的 LUT 导出为两列表格。"""
     with path.open("w", newline="", encoding="utf-8") as fh:
         writer = csv.writer(fh)
         writer.writerow(["index", "value"])
@@ -21,6 +22,7 @@ def _write_lut_csv(path: Path, lut: list[int]) -> None:
 
 
 def run_batch(input_dir: Path, output_dir: Path, cfg: ContrastConfig) -> None:
+    """批量处理目录中的图像，并导出增强图、LUT 与统计摘要。"""
     input_path = Path(input_dir)
     output_path = Path(output_dir)
     enhanced_dir = output_path / "enhanced"
@@ -74,6 +76,7 @@ def run_batch(input_dir: Path, output_dir: Path, cfg: ContrastConfig) -> None:
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
+    """构建命令行参数解析器。"""
     parser = argparse.ArgumentParser(description="Run DDIC self-LUT image batch evaluation.")
     parser.add_argument("input_dir")
     parser.add_argument("output_dir")
@@ -85,6 +88,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """命令行入口：解析参数、构造配置并执行批处理。"""
     parser = build_arg_parser()
     args = parser.parse_args(argv)
     cfg = ContrastConfig(

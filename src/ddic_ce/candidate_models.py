@@ -23,6 +23,7 @@ class AdaptiveGammaConfig(ContrastConfig):
 
 
 def _blend_with_previous_lut(lut: list[int], prev_lut: list[int] | None, cfg: ContrastConfig) -> list[int]:
+    """把当前 LUT 与上一帧 LUT 按参考模型相同的时域系数做融合。"""
     if prev_lut is None:
         return lut
     blended = [
@@ -38,6 +39,12 @@ def generate_adaptive_gamma_lut_from_histogram(
     prev_lut: list[int] | None,
     cfg: AdaptiveGammaConfig,
 ) -> list[int]:
+    """在基线直方图均衡 LUT 上叠加自适应 gamma 曲线。
+
+    先复用参考模型生成基础 LUT，再由直方图均值估计当前帧亮度，推导 gamma
+    系数，并把 gamma 曲线与基线 LUT 按 `gamma_blend` 混合，最后执行时域
+    融合，得到更偏向亮度自适应的输出映射。
+    """
     baseline_lut = generate_lut_from_histogram(hist, total_pixels, None, cfg)
     if total_pixels <= 0:
         return _blend_with_previous_lut(baseline_lut, prev_lut, cfg)
@@ -66,10 +73,12 @@ def generate_adaptive_gamma_lut_from_histogram(
 
 class AdaptiveGammaReferenceModel(ContrastReferenceModel):
     def __init__(self, cfg: AdaptiveGammaConfig | None = None) -> None:
+        """初始化带自适应 gamma 的参考模型。"""
         super().__init__(cfg or AdaptiveGammaConfig())
         self.cfg = cfg or AdaptiveGammaConfig()
 
     def process_frame(self, samples: Iterable[int]) -> FrameResult:
+        """处理单帧灰度样本，并使用自适应 gamma LUT 进行映射。"""
         sample_list = list(samples)
         hist = compute_histogram(sample_list, self.cfg)
         lut = generate_adaptive_gamma_lut_from_histogram(hist, len(sample_list), self.prev_lut, self.cfg)
@@ -134,11 +143,13 @@ class DiscreteSceneRgbResult(DiscreteSceneFrameResult):
 
 
 def _clip_to_bit_depth(value: int, bit_depth: int) -> int:
+    """把任意整数裁剪到指定 bit depth 的无符号范围。"""
     value_max = (1 << bit_depth) - 1
     return min(max(int(value), 0), value_max)
 
 
 def _normalize_to_luma_domain(value: int, bit_depth: int) -> int:
+    """把不同输入位宽的像素规整到 8bit luma 域。"""
     clipped = _clip_to_bit_depth(value, bit_depth)
     if bit_depth == 8:
         return clipped
@@ -148,6 +159,7 @@ def _normalize_to_luma_domain(value: int, bit_depth: int) -> int:
 
 
 def _rgb_to_luma8(rgb: Sequence[int], bit_depth: int) -> int:
+    """把 RGB 样本转换成 8bit luma，用于场景统计和分类。"""
     r = _normalize_to_luma_domain(int(rgb[0]), bit_depth)
     g = _normalize_to_luma_domain(int(rgb[1]), bit_depth)
     b = _normalize_to_luma_domain(int(rgb[2]), bit_depth)
@@ -155,6 +167,7 @@ def _rgb_to_luma8(rgb: Sequence[int], bit_depth: int) -> int:
 
 
 def _compute_percentile(sorted_samples: list[int], percentile: float) -> float:
+    """在已排序样本上做线性插值百分位计算。"""
     if not sorted_samples:
         return 0.0
     if len(sorted_samples) == 1:
@@ -170,6 +183,11 @@ def _compute_percentile(sorted_samples: list[int], percentile: float) -> float:
 
 
 def _summarize_luma_samples(samples: list[int]) -> dict[str, float]:
+    """汇总场景判决需要的亮度统计量。
+
+    输出包括均值、暗/亮像素占比、2% 和 98% 百分位、动态范围以及最小/最大
+    亮度，供 bypass 判决和场景分类复用。
+    """
     if not samples:
         return {
             "mean": 0.0,
@@ -202,6 +220,7 @@ def _summarize_luma_samples(samples: list[int]) -> dict[str, float]:
 
 
 def _generate_pwl_curve(knots: Sequence[tuple[int, int]], cfg: DiscreteSceneGainConfig) -> list[int]:
+    """根据 knot 定义生成单调 PWL tone curve。"""
     curve: list[int] = []
     knot_list = sorted((min(max(x, 0), 255), min(max(y, 0), cfg.input_max)) for x, y in knots)
     for level in range(cfg.lut_size):
@@ -225,6 +244,7 @@ def _generate_pwl_curve(knots: Sequence[tuple[int, int]], cfg: DiscreteSceneGain
 
 
 def _blend_identity_curve(curve: Sequence[int], strength: float, cfg: DiscreteSceneGainConfig) -> list[int]:
+    """把目标曲线与恒等曲线按强度做线性混合。"""
     blend = max(0.0, min(1.0, strength))
     values = []
     for level, target in enumerate(curve):
@@ -234,6 +254,11 @@ def _blend_identity_curve(curve: Sequence[int], strength: float, cfg: DiscreteSc
 
 
 def _tone_lut_to_gain_lut(tone_lut: Sequence[int], cfg: DiscreteSceneGainConfig) -> list[int]:
+    """把 tone LUT 转换为定点 gain LUT。
+
+    对每个非零输入灰阶，计算 `tone / input` 对应的增益，并按
+    `gain_frac_bits` 放大成定点码值，最后裁剪到 `gain_max`。
+    """
     gain_lut = [0]
     scale = 1 << cfg.gain_frac_bits
     for level in range(1, cfg.lut_size):
@@ -243,12 +268,14 @@ def _tone_lut_to_gain_lut(tone_lut: Sequence[int], cfg: DiscreteSceneGainConfig)
 
 
 def _identity_gain_lut(cfg: DiscreteSceneGainConfig) -> list[int]:
+    """生成恒等增益 LUT，对应 gain=1.0 的定点表示。"""
     identity_gain = 1 << cfg.gain_frac_bits
     return [0] + [identity_gain] * (cfg.lut_size - 1)
 
 
 class DiscreteSceneGainModel:
     def __init__(self, cfg: DiscreteSceneGainConfig | None = None) -> None:
+        """初始化离散场景 gain 模型及其场景 LUT 缓存。"""
         self.cfg = cfg or DiscreteSceneGainConfig()
         self._scene_tone_luts = {
             SCENE_NORMAL: _blend_identity_curve(_generate_pwl_curve(self.cfg.family_m_knots, self.cfg), self.cfg.normal_strength, self.cfg),
@@ -266,6 +293,7 @@ class DiscreteSceneGainModel:
         self._prev_mean: float | None = None
 
     def _classify_scene(self, stats: dict[str, float]) -> int:
+        """依据亮度统计量把当前帧分类到离散场景。"""
         if stats["mean"] >= self.cfg.bright_mean_threshold and stats["bright_ratio"] >= self.cfg.bright_ratio_threshold:
             return SCENE_BRIGHT
         if (
@@ -279,6 +307,11 @@ class DiscreteSceneGainModel:
         return SCENE_NORMAL
 
     def _select_scene(self, raw_scene_id: int, frame_mean: float) -> tuple[int, bool]:
+        """结合 hold 机制与 scene cut 判据，决定最终生效场景。
+
+        `raw_scene_id` 是本帧即刻分类结果，返回值中的场景 ID 则是考虑稳态保持、
+        连续确认帧数与均值突变后的输出场景，同时返回是否触发了 scene cut。
+        """
         if self._current_scene_id is None:
             self._current_scene_id = raw_scene_id
             self._prev_mean = frame_mean
@@ -313,9 +346,15 @@ class DiscreteSceneGainModel:
         return self._current_scene_id, False
 
     def _normalize_luma_samples(self, samples: Iterable[int]) -> list[int]:
+        """把输入样本批量归一化到 8bit luma 域。"""
         return [_normalize_to_luma_domain(sample, self.cfg.input_bit_depth) for sample in samples]
 
     def _build_frame_result(self, luma_samples: list[int]) -> DiscreteSceneFrameResult:
+        """为一帧 luma 样本生成完整控制路径结果。
+
+        该函数负责完成统计、bypass 判决、原始场景分类、稳态场景选择，以及
+        tone LUT/gain LUT 的选择，最后打包成统一的结果结构。
+        """
         hist = compute_histogram(luma_samples, self.cfg)
         stats = _summarize_luma_samples(luma_samples)
         bypass_flag = stats["dynamic_range"] <= self.cfg.bypass_dynamic_range_threshold
@@ -347,6 +386,7 @@ class DiscreteSceneGainModel:
         )
 
     def process_frame(self, samples: Iterable[int]) -> DiscreteSceneFrameResult:
+        """处理灰度帧输入，返回场景感知的 tone/gain 输出。"""
         luma_samples = self._normalize_luma_samples(samples)
         return self._build_frame_result(luma_samples)
 
@@ -357,6 +397,12 @@ class DiscreteSceneGainModel:
         cabc_enabled: bool,
         aie_enabled: bool,
     ) -> DiscreteSceneRgbResult:
+        """处理 RGB 输入帧，并按开关决定是否真正对 RGB 通道施加 gain。
+
+        无论是否输出 RGB，该接口都会完成基于 luma 的场景判决与 gain 计算。
+        当 `cabc_enabled` 或 `aie_enabled` 置位时，仅输出控制信息，不直接回写
+        RGB；否则模拟数据路径中的 `gain x RGB` 结果。
+        """
         rgb_list = [
             tuple(_clip_to_bit_depth(int(channel), self.cfg.input_bit_depth) for channel in sample[:3])
             for sample in rgb_samples

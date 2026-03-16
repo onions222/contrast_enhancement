@@ -15,6 +15,7 @@ SUPPORTED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp"}
 
 
 def _apply_lut_to_plane(plane: np.ndarray, lut: list[int]) -> np.ndarray:
+    """把 8bit LUT 直接查表应用到灰度平面。"""
     lut_array = np.asarray(lut, dtype=np.uint8)
     return lut_array[np.asarray(plane, dtype=np.uint8)]
 
@@ -25,6 +26,11 @@ def run_temporal_sequence(
     *,
     model_cls: type[Any] = ContrastReferenceModel,
 ) -> dict[str, object]:
+    """按时间顺序处理一组帧，并记录每帧增强结果及时域指标。
+
+    该函数会复用同一个模型实例，因此能够保留 LUT 时域状态，适合验证视频序列
+    下的稳定性、闪烁和场景切换行为。
+    """
     model = model_cls(cfg)
     results: list[dict[str, object]] = []
     prev_plane: np.ndarray | None = None
@@ -71,6 +77,7 @@ def run_temporal_directory(
     *,
     model_cls: type[Any] = ContrastReferenceModel,
 ) -> dict[str, object]:
+    """读取目录中的图像序列，转为 luma 后执行时域评估。"""
     frames: list[np.ndarray] = []
     names: list[str] = []
     for image_path in sorted(Path(input_dir).iterdir()):
@@ -87,6 +94,7 @@ def run_temporal_directory(
 
 
 def export_temporal_summary(output_path: Path, result: dict[str, object]) -> None:
+    """把时域评估结果导出为精简 JSON，便于离线比对和归档。"""
     serializable_frames = []
     for frame in result["frames"]:
         serializable_frames.append(

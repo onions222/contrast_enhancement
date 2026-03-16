@@ -25,6 +25,12 @@ class FrameResult:
 
 
 def compute_histogram(samples: Iterable[int], cfg: ContrastConfig) -> list[int]:
+    """根据配置把输入灰度样本量化到直方图 bin 中。
+
+    这里假设输入动态范围与 `cfg.input_max` 对齐，并通过右移把 8bit
+    或同等范围的样本映射到 `cfg.n_bins` 个桶里。所有输入都会先裁剪，
+    以避免负数或越界值污染统计结果。
+    """
     hist = [0] * cfg.n_bins
     shift = (cfg.input_max + 1).bit_length() - 1
     bin_shift = shift - cfg.n_bins.bit_length() + 1
@@ -36,6 +42,11 @@ def compute_histogram(samples: Iterable[int], cfg: ContrastConfig) -> list[int]:
 
 
 def clip_and_redistribute(hist: Iterable[int], clip_limit: int) -> list[int]:
+    """执行 CLAHE 风格的裁剪与均匀回灌。
+
+    先把每个 bin 裁到 `clip_limit`，累计多余计数，再把 excess 尽量平均地
+    分配回所有 bin。这样可以抑制局部峰值过强导致的 LUT 失真。
+    """
     clipped = []
     excess = 0
     for count in hist:
@@ -52,6 +63,11 @@ def clip_and_redistribute(hist: Iterable[int], clip_limit: int) -> list[int]:
 
 
 def smooth_histogram_bins(hist: Iterable[int]) -> list[int]:
+    """对 bin 直方图做一维 1-2-1 平滑。
+
+    首尾 bin 采用边界复制，中间 bin 使用 `(left + 2*center + right) / 4`
+    的整数近似。该步骤用于减小统计噪声，让后续 CDF 更稳定。
+    """
     values = list(hist)
     if len(values) < 2:
         return values[:]
@@ -66,6 +82,11 @@ def smooth_histogram_bins(hist: Iterable[int]) -> list[int]:
 
 
 def _expand_bin_lut_to_full_range(bin_lut: list[int], cfg: ContrastConfig) -> list[int]:
+    """把按 bin 生成的粗粒度 LUT 插值扩展到逐灰阶 LUT。
+
+    `bin_lut` 的长度通常等于 `n_bins`，这里只在相邻 bin 的输出之间做线性
+    插值，得到长度为 `lut_size` 的完整映射表，便于逐像素直接查表。
+    """
     full_lut: list[int] = []
     for level in range(cfg.lut_size):
         left_bin = min((level * cfg.n_bins) // cfg.lut_size, cfg.n_bins - 1)
@@ -82,6 +103,11 @@ def _expand_bin_lut_to_full_range(bin_lut: list[int], cfg: ContrastConfig) -> li
 
 
 def _monotonic_clamp(values: Iterable[int], value_max: int) -> list[int]:
+    """把序列裁剪到合法范围，并强制为单调不减。
+
+    LUT 若出现回退会破坏灰阶顺序，因此这里在裁剪到 `[0, value_max]`
+    之后，再用前一项约束当前项，确保输出始终非递减。
+    """
     clamped: list[int] = []
     prev = 0
     for value in values:
@@ -92,6 +118,11 @@ def _monotonic_clamp(values: Iterable[int], value_max: int) -> list[int]:
 
 
 def estimate_histogram_mean(hist: Iterable[int], cfg: ContrastConfig) -> float:
+    """用 bin 中心估计原始样本均值。
+
+    该函数不依赖逐像素数据，而是直接基于直方图近似计算平均亮度，适合
+    用在自适应 gamma 或场景分类等只需要粗统计量的路径中。
+    """
     bins = list(hist)
     total = sum(bins)
     if total <= 0:
@@ -106,6 +137,11 @@ def estimate_histogram_mean(hist: Iterable[int], cfg: ContrastConfig) -> float:
 
 
 def _apply_endpoint_protection(lut: list[int], cfg: ContrastConfig) -> list[int]:
+    """在 LUT 两端施加可配置的阴影提升和高光抑制。
+
+    阴影端根据 `shadow_boost` 在低灰区域附加正向偏置，高光端根据
+    `highlight_suppress` 在高灰区域减小输出。处理后再次做单调约束。
+    """
     if cfg.shadow_boost <= 0.0 and cfg.highlight_suppress <= 0.0:
         return lut
 
@@ -130,6 +166,12 @@ def generate_lut_from_histogram(
     prev_lut: list[int] | None,
     cfg: ContrastConfig,
 ) -> list[int]:
+    """从直方图生成时域平滑后的对比度增强 LUT。
+
+    流程包括：可选 bin 平滑、按 clip gain 进行峰值裁剪并回灌、由累计分布
+    生成 bin 级 LUT、扩展到全灰阶 LUT、端点保护，以及和上一帧 LUT 做
+    IIR 式时间滤波。若输入为空，则回退到前一帧或恒等 LUT。
+    """
     if total_pixels <= 0:
         if prev_lut is not None:
             return prev_lut[:]
@@ -165,10 +207,16 @@ def generate_lut_from_histogram(
 
 class ContrastReferenceModel:
     def __init__(self, cfg: ContrastConfig | None = None) -> None:
+        """初始化参考模型，并保存上一帧 LUT 作为时域状态。"""
         self.cfg = cfg or ContrastConfig()
         self.prev_lut: list[int] | None = None
 
     def process_frame(self, samples: Iterable[int]) -> FrameResult:
+        """处理单帧灰度样本，输出直方图、LUT 和映射后的像素。
+
+        该接口是 Python golden 的主入口。它会更新内部 `prev_lut` 状态，
+        因而同一个模型实例适合按视频帧顺序连续调用。
+        """
         sample_list = list(samples)
         hist = compute_histogram(sample_list, self.cfg)
         lut = generate_lut_from_histogram(hist, len(sample_list), self.prev_lut, self.cfg)

@@ -61,10 +61,12 @@ class FloatDiscreteSceneRgbResult(FloatDiscreteSceneFrameResult):
 
 
 def _clip_to_bit_depth(value: int, bit_depth: int) -> int:
+    """把输入裁剪到指定位宽的无符号整数范围。"""
     return min(max(int(value), 0), (1 << bit_depth) - 1)
 
 
 def _normalize_to_8bit(value: int, bit_depth: int) -> int:
+    """把不同位宽输入统一缩放到 8bit 亮度域。"""
     clipped = _clip_to_bit_depth(value, bit_depth)
     if bit_depth == 8:
         return clipped
@@ -74,6 +76,7 @@ def _normalize_to_8bit(value: int, bit_depth: int) -> int:
 
 
 def _rgb_to_luma8(rgb: Sequence[int], bit_depth: int) -> int:
+    """把 RGB 样本转换为 8bit luma，用于场景分析。"""
     r = _normalize_to_8bit(int(rgb[0]), bit_depth)
     g = _normalize_to_8bit(int(rgb[1]), bit_depth)
     b = _normalize_to_8bit(int(rgb[2]), bit_depth)
@@ -81,6 +84,7 @@ def _rgb_to_luma8(rgb: Sequence[int], bit_depth: int) -> int:
 
 
 def _compute_percentile(sorted_samples: list[int], percentile: float) -> float:
+    """基于已排序样本做线性插值百分位估计。"""
     if not sorted_samples:
         return 0.0
     rank = (len(sorted_samples) - 1) * percentile / 100.0
@@ -91,6 +95,7 @@ def _compute_percentile(sorted_samples: list[int], percentile: float) -> float:
 
 
 def _summarize_luma_samples(samples: list[int]) -> dict[str, float]:
+    """计算场景分类和 bypass 判决需要的亮度摘要统计。"""
     if not samples:
         return {
             "mean": 0.0,
@@ -120,6 +125,7 @@ def _summarize_luma_samples(samples: list[int]) -> dict[str, float]:
 
 
 def _generate_pwl_curve(knots: Sequence[tuple[int, int]], cfg: FloatDiscreteSceneGainConfig) -> list[float]:
+    """根据控制点生成浮点 PWL tone curve。"""
     points = sorted((min(max(x, 0), 255), float(min(max(y, 0), cfg.input_max))) for x, y in knots)
     curve: list[float] = []
     for level in range(cfg.lut_size):
@@ -142,11 +148,13 @@ def _generate_pwl_curve(knots: Sequence[tuple[int, int]], cfg: FloatDiscreteScen
 
 
 def _blend_identity_curve(curve: Sequence[float], strength: float) -> list[float]:
+    """把目标 tone curve 与恒等曲线按强度做浮点混合。"""
     blend = max(0.0, min(1.0, strength))
     return [(1.0 - blend) * level + blend * target for level, target in enumerate(curve)]
 
 
 def _tone_curve_to_gain_lut(tone_curve: Sequence[float], cfg: FloatDiscreteSceneGainConfig) -> list[float]:
+    """把浮点 tone curve 转成浮点 gain LUT。"""
     gain_lut = [0.0]
     for level in range(1, cfg.lut_size):
         gain_lut.append(min(max(tone_curve[level] / level, 0.0), cfg.gain_max))
@@ -154,11 +162,13 @@ def _tone_curve_to_gain_lut(tone_curve: Sequence[float], cfg: FloatDiscreteScene
 
 
 def _identity_tone_curve(cfg: FloatDiscreteSceneGainConfig) -> list[float]:
+    """生成浮点恒等 tone curve。"""
     return [float(level) for level in range(cfg.lut_size)]
 
 
 class FloatDiscreteSceneGainModel:
     def __init__(self, cfg: FloatDiscreteSceneGainConfig | None = None) -> None:
+        """初始化浮点离散场景 gain 模型及预生成曲线。"""
         self.cfg = cfg or FloatDiscreteSceneGainConfig()
         self._scene_tone_curves = {
             SCENE_NORMAL: _blend_identity_curve(_generate_pwl_curve(self.cfg.family_m_knots, self.cfg), self.cfg.normal_strength),
@@ -176,6 +186,7 @@ class FloatDiscreteSceneGainModel:
         self._prev_mean: float | None = None
 
     def _classify_scene(self, stats: dict[str, float]) -> int:
+        """根据统计特征给当前帧打上原始场景标签。"""
         if stats["mean"] >= self.cfg.bright_mean_threshold and stats["bright_ratio"] >= self.cfg.bright_ratio_threshold:
             return SCENE_BRIGHT
         if (
@@ -189,6 +200,7 @@ class FloatDiscreteSceneGainModel:
         return SCENE_NORMAL
 
     def _select_scene(self, raw_scene_id: int, frame_mean: float) -> int:
+        """结合 hold 逻辑和切场条件选择最终输出场景。"""
         if self._current_scene_id is None:
             self._current_scene_id = raw_scene_id
             self._prev_mean = frame_mean
@@ -223,9 +235,11 @@ class FloatDiscreteSceneGainModel:
         return self._current_scene_id
 
     def _normalize_luma_samples(self, samples: Iterable[int]) -> list[int]:
+        """把输入亮度样本统一转换到 8bit 域。"""
         return [_normalize_to_8bit(sample, self.cfg.input_bit_depth) for sample in samples]
 
     def _build_frame_result(self, luma_samples: list[int]) -> FloatDiscreteSceneFrameResult:
+        """为单帧样本构造完整的浮点控制路径结果。"""
         hist = compute_histogram(luma_samples, self.cfg)
         stats = _summarize_luma_samples(luma_samples)
         bypass_flag = stats["dynamic_range"] <= self.cfg.bypass_dynamic_range_threshold
@@ -258,6 +272,7 @@ class FloatDiscreteSceneGainModel:
         )
 
     def process_frame(self, samples: Iterable[int]) -> FloatDiscreteSceneFrameResult:
+        """处理灰度帧输入，返回浮点 tone/gain 分析结果。"""
         return self._build_frame_result(self._normalize_luma_samples(samples))
 
     def process_rgb_frame(
@@ -267,6 +282,7 @@ class FloatDiscreteSceneGainModel:
         cabc_enabled: bool,
         aie_enabled: bool,
     ) -> FloatDiscreteSceneRgbResult:
+        """处理 RGB 帧，并在需要时模拟浮点 `gain x RGB` 输出。"""
         rgb_list = [
             tuple(_clip_to_bit_depth(int(channel), self.cfg.input_bit_depth) for channel in sample[:3])
             for sample in rgb_samples

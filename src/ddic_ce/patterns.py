@@ -4,12 +4,14 @@ import numpy as np
 
 
 def generate_ramp_pattern(width: int, height: int, *, start: int = 0, stop: int = 255) -> np.ndarray:
+    """生成水平灰阶 ramp 图，用于观察 LUT 的整体映射趋势。"""
     ramp = np.linspace(start, stop, num=width, dtype=np.float64)
     tiled = np.tile(ramp.astype(np.uint8), (height, 1))
     return tiled
 
 
 def generate_bimodal_pattern(width: int, height: int, *, low: int = 32, high: int = 224) -> np.ndarray:
+    """生成左右两半分别为低灰/高灰的双峰测试图。"""
     split = width // 2
     plane = np.full((height, width), high, dtype=np.uint8)
     plane[:, :split] = low
@@ -24,6 +26,7 @@ def generate_noise_on_dark_pattern(
     noise_amplitude: int = 8,
     seed: int = 13,
 ) -> np.ndarray:
+    """生成暗背景上叠加随机噪声的测试图。"""
     rng = np.random.default_rng(seed)
     noise = rng.integers(0, noise_amplitude + 1, size=(height, width), dtype=np.uint8)
     plane = np.clip(base + noise.astype(np.uint16), 0, 255)
@@ -37,6 +40,7 @@ def generate_skin_tone_patch_pattern(
     background: int = 96,
     patch: int = 172,
 ) -> np.ndarray:
+    """生成带中央肤色亮度块的测试图，用于观察中灰和肤色保护。"""
     plane = np.full((height, width), background, dtype=np.uint8)
     row_start = height // 4
     row_end = max(row_start + 1, (3 * height) // 4)
@@ -47,6 +51,7 @@ def generate_skin_tone_patch_pattern(
 
 
 def generate_pattern_suite(width: int = 256, height: int = 256) -> dict[str, dict[str, object]]:
+    """生成一组常用算法验证 pattern 及对应元数据。"""
     patterns: dict[str, dict[str, object]] = {}
     ramps = {
         "ramp": generate_ramp_pattern(width, height, start=0, stop=255),

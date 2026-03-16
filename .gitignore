@@ -1,0 +1,6 @@
+.DS_Store
+.pytest_cache/
+.superpowers/
+__pycache__/
+*.pyc
+docs/research/materials/

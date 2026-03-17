@@ -22,23 +22,23 @@ class FloatDiscreteSceneGainConfig(ContrastConfig):
     input_bit_depth: int = 8
     gain_max: float = 1.75
     bypass_dynamic_range_threshold: float = 4.0
-    bright_mean_threshold: float = 168.0
-    bright_ratio_threshold: float = 0.18
-    dark2_mean_threshold: float = 56.0
-    dark2_ratio_threshold: float = 0.80
-    dark2_bright_ratio_threshold: float = 0.02
-    dark1_mean_threshold: float = 104.0
-    dark1_ratio_threshold: float = 0.50
+    bright_mean_threshold: float = 176.0
+    bright_ratio_threshold: float = 0.25
+    dark2_mean_threshold: float = 48.0
+    dark2_ratio_threshold: float = 0.85
+    dark2_bright_ratio_threshold: float = 0.01
+    dark1_mean_threshold: float = 96.0
+    dark1_ratio_threshold: float = 0.55
     scene_cut_mean_delta: float = 32.0
     scene_switch_confirm_frames: int = 2
     scene_hold_enable: bool = True
     normal_strength: float = 0.50
     bright_strength: float = 0.65
     dark_i_strength: float = 0.70
-    dark_ii_strength: float = 0.85
+    dark_ii_strength: float = 0.65
     family_m_knots: tuple[tuple[int, int], ...] = ((0, 0), (64, 40), (128, 128), (192, 224), (255, 255))
-    family_b_knots: tuple[tuple[int, int], ...] = ((0, 0), (96, 72), (192, 208), (224, 246), (255, 255))
-    family_d_knots: tuple[tuple[int, int], ...] = ((0, 0), (32, 12), (96, 128), (192, 236), (255, 255))
+    family_b_knots: tuple[tuple[int, int], ...] = ((0, 0), (96, 64), (192, 192), (224, 236), (255, 255))
+    family_d_knots: tuple[tuple[int, int], ...] = ((0, 0), (48, 24), (96, 144), (192, 232), (255, 255))
 
 
 @dataclass(frozen=True)

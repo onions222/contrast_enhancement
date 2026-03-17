@@ -30,6 +30,18 @@ def test_float_scene_model_emits_float_gain_lut_and_monotonic_tone_curve():
     assert max(result.gain_lut) <= 1.75
 
 
+def test_float_scene_model_config_matches_revised_curve_families():
+    from ddic_ce_float.discrete_scene_gain import FloatDiscreteSceneGainConfig, FloatDiscreteSceneGainModel
+
+    cfg = FloatDiscreteSceneGainConfig(scene_hold_enable=False)
+    model = FloatDiscreteSceneGainModel(cfg)
+
+    assert cfg.family_b_knots == ((0, 0), (96, 64), (192, 192), (224, 236), (255, 255))
+    assert cfg.family_d_knots == ((0, 0), (48, 24), (96, 144), (192, 232), (255, 255))
+    assert model._scene_tone_curves[1][192] == 192.0
+    assert model._scene_tone_curves[1][224] > 224.0
+
+
 def test_float_scene_model_outputs_gain_only_or_rgb_by_mode():
     from ddic_ce_float.discrete_scene_gain import FloatDiscreteSceneGainConfig, FloatDiscreteSceneGainModel
 

@@ -48,6 +48,18 @@ def test_discrete_scene_model_classifies_expected_scene_without_hold():
     assert model.process_frame(flat).bypass_flag is True
 
 
+def test_discrete_scene_model_uses_revised_scene_thresholds_for_high_key_and_dark_split():
+    from ddic_ce.candidate_models import DiscreteSceneGainConfig, DiscreteSceneGainModel
+
+    model = DiscreteSceneGainModel(DiscreteSceneGainConfig(scene_hold_enable=False))
+
+    highlight_heavy_but_not_bright = [170] * 80 + [224] * 20
+    very_dark_with_some_detail = [0] * 80 + [64] * 20
+
+    assert model.process_frame(highlight_heavy_but_not_bright).scene_name == "Normal"
+    assert model.process_frame(very_dark_with_some_detail).scene_name == "Dark I"
+
+
 def test_discrete_scene_model_emits_monotonic_tone_lut_and_bounded_gain_lut():
     from ddic_ce.candidate_models import DiscreteSceneGainConfig, DiscreteSceneGainModel
 
@@ -62,12 +74,26 @@ def test_discrete_scene_model_emits_monotonic_tone_lut_and_bounded_gain_lut():
     assert max(result.gain_lut) <= 1792
 
 
+def test_discrete_scene_curve_families_match_slide_constraints():
+    from ddic_ce.candidate_models import DiscreteSceneGainConfig, DiscreteSceneGainModel
+
+    cfg = DiscreteSceneGainConfig(scene_hold_enable=False)
+    model = DiscreteSceneGainModel(cfg)
+
+    assert cfg.family_b_knots == ((0, 0), (96, 64), (192, 192), (224, 236), (255, 255))
+    assert cfg.family_d_knots == ((0, 0), (48, 24), (96, 144), (192, 232), (255, 255))
+    assert model._scene_tone_luts[0][192] == 208
+    assert model._scene_tone_luts[1][192] == 192
+    assert model._scene_tone_luts[1][224] > 224
+    assert model._scene_tone_luts[3][192] > model._scene_tone_luts[0][192]
+
+
 def test_discrete_scene_model_holds_scene_until_second_confirmation():
     from ddic_ce.candidate_models import DiscreteSceneGainConfig, DiscreteSceneGainModel
 
     model = DiscreteSceneGainModel(DiscreteSceneGainConfig())
-    normal = [120] * 50 + [180] * 50
-    bright = [168] * 82 + [224] * 18
+    normal = [150] * 75 + [190] * 25
+    bright = [176] * 75 + [224] * 25
 
     first = model.process_frame(normal)
     second = model.process_frame(bright)

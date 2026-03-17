@@ -48,15 +48,18 @@ cfg.gain_one = bitshift(uint16(1), cfg.gain_frac_bits);
 % gain_max = 1792，表示 1.75 的 U1.10 码值，11 bit。
 cfg.gain_max = uint16(1792);
 
-% 以下阈值可直接映射到 DDIC 控制寄存器，默认值来自当前参考算法。
+% 以下阈值可直接映射到 DDIC 控制寄存器。
+% 默认值按当前图证与文献重构版本收敛：
+%   - Bright 需要更高的平均亮度和高亮像素占比，避免“只是偏亮”就误判为亮场
+%   - Dark II 要求更纯的低调分布；若仍带一定中灰细节，则优先归到 Dark I
 cfg.bypass_dynamic_range_threshold = 4.0;
-cfg.bright_mean_threshold = 168.0;
-cfg.bright_ratio_threshold = 0.18;
-cfg.dark2_mean_threshold = 56.0;
-cfg.dark2_ratio_threshold = 0.80;
-cfg.dark2_bright_ratio_threshold = 0.02;
-cfg.dark1_mean_threshold = 104.0;
-cfg.dark1_ratio_threshold = 0.50;
+cfg.bright_mean_threshold = 176.0;
+cfg.bright_ratio_threshold = 0.25;
+cfg.dark2_mean_threshold = 48.0;
+cfg.dark2_ratio_threshold = 0.85;
+cfg.dark2_bright_ratio_threshold = 0.01;
+cfg.dark1_mean_threshold = 96.0;
+cfg.dark1_ratio_threshold = 0.55;
 cfg.scene_cut_mean_delta = 32.0;
 cfg.scene_switch_confirm_frames = 2;
 cfg.scene_hold_enable = true;
@@ -75,9 +78,13 @@ cfg.SCENE_DARK_II = uint8(3);
 
 % curve family knot：
 % 每行格式为 [x, y]，x/y 都在 U8.0 域，MATLAB 中用 int32 存储以简化运算。
+% 设计说明：
+%   - family_m_knots: 对应图中 Normal / Dark II 共用基础曲线
+%   - family_b_knots: 按图中亮场参考线重构，强制经过 (192,192)，高光 shoulder 落在 192 之后
+%   - family_d_knots: Dark I 根据文献与经验重构，侧重保黑同时提升中灰
 cfg.family_m_knots = int32([0 0; 64 40; 128 128; 192 224; 255 255]);
-cfg.family_b_knots = int32([0 0; 96 72; 192 208; 224 246; 255 255]);
-cfg.family_d_knots = int32([0 0; 32 12; 96 128; 192 236; 255 255]);
+cfg.family_b_knots = int32([0 0; 96 64; 192 192; 224 236; 255 255]);
+cfg.family_d_knots = int32([0 0; 48 24; 96 144; 192 232; 255 255]);
 
 % q_table 为说明性字段，用于文档与 debug，不要求映射到真实寄存器。
 cfg.q_table = struct( ...

@@ -16,8 +16,8 @@
 - `ce_hw_control_update.m`：帧级控制路径更新与运行时 LUT 构建
 - `ce_hw_datapath.m`：逐像素数据路径建模
 - `ce_hw_helpers.m`：手工定点语义和辅助计算函数
-- `run_ce_hw_case.m`：单 case 运行外壳
-- `run_ce_hw_batch.m`：批量 case 运行外壳
+- `run_ce_hw_case.m`：单 case 运行脚本入口
+- `run_ce_hw_batch.m`：批量 case 运行脚本入口
 - `validate_ce_hw_against_python.m`：与 Python 风格 golden 的误差统计验证入口
 
 ## 定点规则摘要
@@ -32,7 +32,10 @@
 ```matlab
 addpath('matlab');
 cfg = ce_hw_config();
-result = run_ce_hw_case();
+run('run_ce_hw_case.m');
+disp(result.scene_name);
+run('run_ce_hw_batch.m');
+disp(summary.scene_names);
 report = validate_ce_hw_against_python();
 ```
 

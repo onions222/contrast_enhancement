@@ -195,7 +195,7 @@ def run_float_manual_eval(cfg: FloatManualEvalConfig | None = None) -> dict[str,
     frames: list[dict[str, object]] = []
 
     for index, (name, relative_path, plane) in enumerate(items):
-        result = model.process_frame(np.asarray(plane, dtype=np.uint8).reshape(-1).tolist())
+        result = model.process_plane_image(np.asarray(plane, dtype=np.uint8))
         enhanced = np.asarray(result.mapped_samples, dtype=np.uint8).reshape(plane.shape)
         metrics = summarize_plane(enhanced)
         manifest_row = manifest_lookup.get(relative_path) or manifest_lookup.get(Path(relative_path).name)

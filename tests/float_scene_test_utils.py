@@ -46,6 +46,76 @@ def build_object_plane(
     return flat.reshape(shape)
 
 
+def build_banded_plane(
+    levels: list[int],
+    *,
+    orientation: str,
+    shape: tuple[int, int] = (32, 32),
+) -> np.ndarray:
+    height, width = shape
+    plane = np.zeros(shape, dtype=np.uint8)
+    if orientation == "vertical":
+        edges = np.linspace(0, width, num=len(levels) + 1, dtype=int)
+        for index, level in enumerate(levels):
+            plane[:, edges[index] : edges[index + 1]] = level
+        return plane
+    if orientation == "horizontal":
+        edges = np.linspace(0, height, num=len(levels) + 1, dtype=int)
+        for index, level in enumerate(levels):
+            plane[edges[index] : edges[index + 1], :] = level
+        return plane
+    raise ValueError(f"Unsupported orientation: {orientation}")
+
+
+def build_color_bars_rgb(shape: tuple[int, int] = (32, 48)) -> np.ndarray:
+    colors = [
+        (255, 255, 255),
+        (255, 255, 0),
+        (0, 255, 255),
+        (0, 255, 0),
+        (255, 0, 255),
+        (255, 0, 0),
+        (0, 0, 255),
+        (0, 0, 0),
+    ]
+    height, width = shape
+    rgb = np.zeros((height, width, 3), dtype=np.uint8)
+    edges = np.linspace(0, width, num=len(colors) + 1, dtype=int)
+    for index, color in enumerate(colors):
+        rgb[:, edges[index] : edges[index + 1], :] = np.asarray(color, dtype=np.uint8)
+    return rgb
+
+
+def build_single_channel_ramp_rgb(
+    *,
+    channel: str,
+    levels: int,
+    orientation: str,
+    shape: tuple[int, int] = (32, 64),
+) -> np.ndarray:
+    height, width = shape
+    values = np.linspace(0, 255, num=levels, dtype=np.uint8)
+    if orientation == "horizontal":
+        edges = np.linspace(0, width, num=levels + 1, dtype=int)
+        line = np.zeros(width, dtype=np.uint8)
+        for index, value in enumerate(values):
+            line[edges[index] : edges[index + 1]] = value
+        plane = np.tile(line, (height, 1))
+    elif orientation == "vertical":
+        edges = np.linspace(0, height, num=levels + 1, dtype=int)
+        line = np.zeros(height, dtype=np.uint8)
+        for index, value in enumerate(values):
+            line[edges[index] : edges[index + 1]] = value
+        plane = np.tile(line[:, None], (1, width))
+    else:
+        raise ValueError(f"Unsupported orientation: {orientation}")
+
+    rgb = np.zeros((height, width, 3), dtype=np.uint8)
+    channel_index = {"r": 0, "g": 1, "b": 2}[channel]
+    rgb[..., channel_index] = plane
+    return rgb
+
+
 def build_bright_scene_plane(shape: tuple[int, int] = (64, 64)) -> np.ndarray:
     return build_object_plane(176, 224, object_ratio=0.25, shape=shape)
 
@@ -89,7 +159,7 @@ def process_plane(
     **cfg_overrides: float | int | bool,
 ) -> tuple[object, np.ndarray]:
     model = make_float_model(scene_hold_enable=False, **cfg_overrides)
-    result = model.process_frame(np.asarray(plane, dtype=np.uint8).reshape(-1).tolist())
+    result = model.process_plane_image(np.asarray(plane, dtype=np.uint8))
     enhanced = np.asarray(result.mapped_samples, dtype=np.uint8).reshape(plane.shape)
     return result, enhanced
 
@@ -107,8 +177,8 @@ def process_rgb(
     **cfg_overrides: float | int | bool,
 ) -> tuple[object, np.ndarray]:
     model = make_float_model(scene_hold_enable=False, **cfg_overrides)
-    result = model.process_rgb_frame(
-        np.asarray(rgb, dtype=np.uint8).reshape(-1, 3).tolist(),
+    result = model.process_rgb_image(
+        np.asarray(rgb, dtype=np.uint8),
         cabc_enabled=False,
         aie_enabled=False,
     )

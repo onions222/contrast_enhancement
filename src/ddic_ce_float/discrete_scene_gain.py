@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, Sequence
 
+import numpy as np
+
 from ddic_ce.reference_model import ContrastConfig, FrameResult, compute_histogram
 
 SCENE_NORMAL = 0
@@ -32,6 +34,12 @@ class FloatDiscreteSceneGainConfig(ContrastConfig):
     scene_cut_mean_delta: float = 32.0
     scene_switch_confirm_frames: int = 2
     scene_hold_enable: bool = True
+    pattern_bypass_enable: bool = True
+    pattern_ramp_min_levels: int = 16
+    pattern_band_min_levels: int = 4
+    pattern_band_max_levels: int = 12
+    pattern_hist_uniformity_threshold: float = 0.35
+    pattern_max_bin_ratio_threshold: float = 0.07
     normal_strength: float = 0.50
     bright_strength: float = 0.65
     dark_i_strength: float = 0.70
@@ -166,6 +174,13 @@ def _identity_tone_curve(cfg: FloatDiscreteSceneGainConfig) -> list[float]:
     return [float(level) for level in range(cfg.lut_size)]
 
 
+def _is_monotonic_line(values: np.ndarray) -> bool:
+    if values.size <= 1:
+        return True
+    diffs = np.diff(values.astype(np.int16))
+    return bool(np.all(diffs >= 0) or np.all(diffs <= 0))
+
+
 class FloatDiscreteSceneGainModel:
     def __init__(self, cfg: FloatDiscreteSceneGainConfig | None = None) -> None:
         """初始化浮点离散场景 gain 模型及预生成曲线。"""
@@ -184,6 +199,60 @@ class FloatDiscreteSceneGainModel:
         self._pending_scene_id: int | None = None
         self._pending_count = 0
         self._prev_mean: float | None = None
+
+    def _detect_pattern_bypass(self, plane: np.ndarray) -> bool:
+        if not self.cfg.pattern_bypass_enable:
+            return False
+
+        return self._pattern_histogram_candidate(plane) and self._pattern_streaming_confirmation(plane)
+
+    def _pattern_histogram_candidate(self, plane: np.ndarray) -> bool:
+        values = np.asarray(plane, dtype=np.uint8)
+        if values.ndim != 2 or values.size == 0:
+            return False
+
+        hist = np.bincount(values.reshape(-1), minlength=256)
+        active = hist[hist > 0]
+        if active.size == 0:
+            return False
+
+        active_bin_count = int(active.size)
+        total = int(values.size)
+        max_bin_ratio = float(active.max()) / max(total, 1)
+        mean_active = float(np.mean(active))
+        uniformity = float(np.mean(np.abs(active - mean_active)) / max(mean_active, 1.0))
+
+        dense_ramp_candidate = (
+            active_bin_count >= self.cfg.pattern_ramp_min_levels
+            and max_bin_ratio <= self.cfg.pattern_max_bin_ratio_threshold
+            and uniformity <= self.cfg.pattern_hist_uniformity_threshold
+        )
+        sparse_band_candidate = (
+            self.cfg.pattern_band_min_levels <= active_bin_count <= self.cfg.pattern_band_max_levels
+            and max_bin_ratio > self.cfg.pattern_max_bin_ratio_threshold
+        )
+        return dense_ramp_candidate or sparse_band_candidate
+
+    def _pattern_streaming_confirmation(self, plane: np.ndarray) -> bool:
+        values = np.asarray(plane, dtype=np.uint8)
+        if values.ndim != 2 or values.size == 0:
+            return False
+
+        unique_count = int(np.unique(values).size)
+        first_row = values[0]
+        first_col = values[:, 0]
+        rows_identical = bool(np.all(values == first_row[None, :]))
+        cols_identical = bool(np.all(values == first_col[:, None]))
+
+        if rows_identical and unique_count >= self.cfg.pattern_ramp_min_levels and _is_monotonic_line(first_row):
+            return True
+        if cols_identical and unique_count >= self.cfg.pattern_ramp_min_levels and _is_monotonic_line(first_col):
+            return True
+        if rows_identical and self.cfg.pattern_band_min_levels <= unique_count <= self.cfg.pattern_band_max_levels:
+            return True
+        if cols_identical and self.cfg.pattern_band_min_levels <= unique_count <= self.cfg.pattern_band_max_levels:
+            return True
+        return False
 
     def _classify_scene(self, stats: dict[str, float]) -> int:
         """根据统计特征给当前帧打上原始场景标签。"""
@@ -238,11 +307,17 @@ class FloatDiscreteSceneGainModel:
         """把输入亮度样本统一转换到 8bit 域。"""
         return [_normalize_to_8bit(sample, self.cfg.input_bit_depth) for sample in samples]
 
-    def _build_frame_result(self, luma_samples: list[int]) -> FloatDiscreteSceneFrameResult:
+    def _build_frame_result(
+        self,
+        luma_samples: list[int],
+        *,
+        plane: np.ndarray | None = None,
+    ) -> FloatDiscreteSceneFrameResult:
         """为单帧样本构造完整的浮点控制路径结果。"""
         hist = compute_histogram(luma_samples, self.cfg)
         stats = _summarize_luma_samples(luma_samples)
-        bypass_flag = stats["dynamic_range"] <= self.cfg.bypass_dynamic_range_threshold
+        pattern_bypass_flag = plane is not None and self._detect_pattern_bypass(plane)
+        bypass_flag = pattern_bypass_flag or stats["dynamic_range"] <= self.cfg.bypass_dynamic_range_threshold
         raw_scene_id = self._classify_scene(stats)
         scene_id = self._select_scene(raw_scene_id, stats["mean"])
 
@@ -275,6 +350,11 @@ class FloatDiscreteSceneGainModel:
         """处理灰度帧输入，返回浮点 tone/gain 分析结果。"""
         return self._build_frame_result(self._normalize_luma_samples(samples))
 
+    def process_plane_image(self, plane: np.ndarray) -> FloatDiscreteSceneFrameResult:
+        """处理二维 luma 平面，可使用 pattern-aware bypass。"""
+        plane_u8 = np.asarray(plane, dtype=np.uint8)
+        return self._build_frame_result(plane_u8.reshape(-1).tolist(), plane=plane_u8)
+
     def process_rgb_frame(
         self,
         rgb_samples: Iterable[Sequence[int]],
@@ -296,7 +376,55 @@ class FloatDiscreteSceneGainModel:
             output_max = float((1 << self.cfg.input_bit_depth) - 1)
             rgb_out = []
             for pixel, gain in zip(rgb_list, frame_result.gain_samples):
-                scaled = tuple(min(output_max, channel * gain) for channel in pixel)
+                if frame_result.bypass_flag:
+                    scaled = tuple(float(channel) for channel in pixel)
+                else:
+                    scaled = tuple(min(output_max, channel * gain) for channel in pixel)
+                rgb_out.append(scaled)
+
+        return FloatDiscreteSceneRgbResult(
+            histogram=frame_result.histogram,
+            lut=frame_result.lut,
+            mapped_samples=frame_result.mapped_samples,
+            tone_curve=frame_result.tone_curve,
+            gain_lut=frame_result.gain_lut,
+            gain_samples=frame_result.gain_samples,
+            scene_id=frame_result.scene_id,
+            scene_name=frame_result.scene_name,
+            raw_scene_id=frame_result.raw_scene_id,
+            raw_scene_name=frame_result.raw_scene_name,
+            bypass_flag=frame_result.bypass_flag,
+            stats=frame_result.stats,
+            gain_mode_enabled=gain_mode_enabled,
+            rgb_out=rgb_out,
+        )
+
+    def process_rgb_image(
+        self,
+        rgb: np.ndarray,
+        *,
+        cabc_enabled: bool,
+        aie_enabled: bool,
+    ) -> FloatDiscreteSceneRgbResult:
+        """处理 RGB 图像，可使用 pattern-aware bypass。"""
+        rgb_u8 = np.asarray(rgb, dtype=np.uint8)
+        rgb_list = [tuple(int(channel) for channel in pixel) for pixel in rgb_u8.reshape(-1, 3)]
+        luma_plane = np.asarray(
+            [[_rgb_to_luma8(pixel, self.cfg.input_bit_depth) for pixel in row] for row in rgb_u8.reshape(rgb_u8.shape[0], rgb_u8.shape[1], 3)],
+            dtype=np.uint8,
+        )
+        frame_result = self._build_frame_result(luma_plane.reshape(-1).tolist(), plane=luma_plane)
+        gain_mode_enabled = cabc_enabled or aie_enabled
+        rgb_out: list[tuple[float, float, float]] | None = None
+
+        if not gain_mode_enabled:
+            output_max = float((1 << self.cfg.input_bit_depth) - 1)
+            rgb_out = []
+            for pixel, gain in zip(rgb_list, frame_result.gain_samples):
+                if frame_result.bypass_flag:
+                    scaled = tuple(float(channel) for channel in pixel)
+                else:
+                    scaled = tuple(min(output_max, channel * gain) for channel in pixel)
                 rgb_out.append(scaled)
 
         return FloatDiscreteSceneRgbResult(

@@ -38,7 +38,10 @@ def run_temporal_sequence(
 
     for index, frame in enumerate(frames):
         plane = np.asarray(frame, dtype=np.uint8)
-        frame_result = model.process_frame(plane.reshape(-1).tolist())
+        if hasattr(model, "process_plane_image"):
+            frame_result = model.process_plane_image(plane)
+        else:
+            frame_result = model.process_frame(plane.reshape(-1).tolist())
         enhanced_plane = np.asarray(frame_result.mapped_samples, dtype=np.uint8).reshape(plane.shape)
         metrics = summarize_plane(enhanced_plane)
         temporal = (

@@ -4,3 +4,8 @@
 __pycache__/
 *.pyc
 docs/research/materials/
+# Keep all downloaded/generated evaluation images local-only.
+# These directories are intentionally excluded from Git so test images
+# and generated reports do not get pushed to the remote repository.
+data/raw/
+data/derived/

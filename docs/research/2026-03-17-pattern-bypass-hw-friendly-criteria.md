@@ -2,486 +2,428 @@
 
 ## Scope
 - Date: `2026-03-17`
-- Goal: define a hardware-friendly `pattern bypass` rule set for the Python float contrast-enhancement pipeline, with the explicit constraint that the final DDIC-oriented version should avoid full-frame buffering.
+- Goal: define a hardware-friendly `pattern bypass` baseline for the Python float contrast-enhancement pipeline.
+- Final deployment target: DDIC-oriented hardware path with tight resource limits.
+- Hard constraints:
+  - no frame buffer
+  - no line-buffer-dependent stage-2 structure analysis
+  - histogram-driven decision only
 - Target patterns:
   - gray ramp
-  - RGB ramp
+  - RGB ramp projected to luma
   - gray banded pattern
   - color bars
-  - obvious synthetic pattern combinations
-- Non-targets:
-  - natural photographs with smooth sky/wall/fog gradients
-  - ordinary low-texture photos
-  - generic low-dynamic-range content that should still use the normal scene pipeline
+  - comb / sawtooth / alternating-hole synthetic patterns
+- Strategy:
+  - prefer high recall on synthetic test patterns
+  - it is acceptable to bypass some suspicious non-natural images if this helps catch more test patterns
 
-## Problem Statement
-The current Python-side pattern bypass can use full 2D plane structure, but that is not the right long-term contract for hardware. For hardware deployment, we need a rule set that:
+## Final Design Decision
+This document supersedes the earlier `histogram + streaming confirmation` direction.
 
-- does not require a frame buffer
-- can be computed online during raster scan
-- preferably reuses already-available histogram statistics
-- only adds low-cost streaming features and small control-state storage
+The baseline rule set is now:
 
-The main design question is:
+- input: `32-bin luma histogram`
+- output: `pattern_bypass_flag`
+- decision style: pure histogram classification
 
-> Can pattern bypass be decided from histogram only?
+The reason for this change is hardware cost:
 
-Answer:
+- `32-bin histogram` is materially cheaper than 256-bin control statistics
+- streaming row/column confirmation still adds structural logic cost that is not justified for the current priority
+- the current priority is to aggressively intercept synthetic test patterns, especially gradient-like inputs
 
-- `Histogram only` is useful as a coarse candidate filter.
-- `Histogram only` is not sufficient to robustly separate synthetic pattern images from natural photographs.
-- The recommended architecture is `histogram coarse filter + streaming structure confirmation`.
+## Problem Framing
+The pattern-bypass problem is no longer framed as:
 
-## Why Histogram Only Is Not Enough
-Histogram preserves value distribution but discards spatial arrangement.
+> "Can we robustly separate synthetic patterns from all natural photographs?"
 
-Examples of ambiguity:
+It is now framed as:
 
-- A perfect gray ramp and a randomly shuffled ramp can have nearly identical histograms.
-- A synthetic banded pattern and a natural poster-like image can both show a small number of strong histogram peaks.
-- A color-bar image and a different spatial arrangement of the same colors can produce the same per-channel histogram.
+> "Can we use a low-cost histogram-only rule set to catch as many pattern-like test images as possible?"
 
-Therefore:
+This is an intentionally more aggressive objective.
 
-- histogram can say `this frame looks pattern-like`
-- histogram alone cannot reliably say `this frame is a synthetic test pattern and should bypass`
+## Histogram Representation
+Use a fixed `32-bin` luma histogram.
 
-## Recommended Decision Flow
-Use a two-stage rule set.
+For 8-bit luma:
 
-### Stage 1: Histogram Candidate Filter
-Use frame histogram and, for RGB input, per-channel histograms to identify a small set of pattern candidates.
+```text
+bin_index = floor(luma / 8)
+```
 
-This stage should be cheap and permissive:
+This is the recommended first implementation target.
 
-- if not pattern-like, immediately return `pattern_bypass = 0`
-- if pattern-like, continue to Stage 2
+If later validation shows insufficient separation, the fallback upgrade path is:
 
-### Stage 2: Streaming Structure Confirmation
-During scan, accumulate low-cost structural features using:
+- keep the same rule structure
+- replace `32-bin` with `64-bin`
 
-- previous pixel
-- previous line buffer or line-level summary
-- small counters/accumulators
-
-This stage confirms whether the candidate is:
-
-- a ramp
-- a banded pattern
-- color bars
-- a clearly synthetic structured pattern
-
-Only after Stage 2 should the system assert:
-
-- `pattern_bypass = 1`
-- identity LUT
-- gain = `1.0`
-
-## Stage-1 Histogram Features
-These features are suitable for hardware control logic.
+## Core Features
+The final baseline uses only histogram-domain features.
 
 ### 1. `active_bin_count`
 Definition:
 
 ```text
-active_bin_count = number of bins whose count > 0
+active_bin_count = number of bins with hist[i] > 0
 ```
 
 Meaning:
 
-- large for smooth/full-range ramps
-- small for banded patterns and color bars
+- large for dense gradient-like content
+- small for sparse banded / color-bar-like content
 
-Use:
-
-- high value can indicate `gray ramp candidate`
-- low value can indicate `banded/color-bar candidate`
-
-Limitation:
-
-- natural gradients can also produce large `active_bin_count`
-- some natural images also have sparse histograms
-
-### 2. `max_bin_ratio`
+### 2. `first_active_bin`
 Definition:
 
 ```text
-max_bin_ratio = max(hist[i]) / total_pixel_count
+first_active_bin = smallest i such that hist[i] > 0
 ```
 
-Meaning:
-
-- high for few-level patterns
-- low for dense ramps
-
-Use:
-
-- helps distinguish dense ramps from sparse-level structured patterns
-
-Limitation:
-
-- still has no spatial information
-
-### 3. `hist_uniformity_score`
-Definition:
-
-Use only active bins:
-
-```text
-mean_active = average count across active bins
-hist_uniformity_score = average(|hist[i] - mean_active|) / mean_active
-```
-
-Meaning:
-
-- low when counts across active bins are close to uniform
-- gray ramps tend to be close to uniform
-
-Use:
-
-- strong support for `gray ramp candidate`
-
-Limitation:
-
-- some natural smooth gradients may also look uniform enough
-
-### 4. `peak_bin_count`
+### 3. `last_active_bin`
 Definition:
 
 ```text
-peak_bin_count = number of bins whose count exceeds a fixed ratio threshold
+last_active_bin = largest i such that hist[i] > 0
 ```
 
-Meaning:
-
-- small number of strong peaks is common in banded patterns and color bars
-
-Use:
-
-- identify sparse structured candidates
-
-Limitation:
-
-- posters, UI screenshots, and some synthetic-looking real content may also trigger
-
-### 5. `per_channel_active_bin_count`
-Definition:
-
-Apply `active_bin_count` independently to `R/G/B`.
-
-Meaning:
-
-- useful for RGB ramps and color bars
-- for example, a single-channel ramp often shows:
-  - one channel dense
-  - two channels sparse or constant
-
-Use:
-
-- distinguish `RGB ramp candidate` from generic luma-only variation
-
-Limitation:
-
-- still cannot confirm spatial arrangement
-
-## Stage-2 Streaming Features
-These features do not require full-frame storage.
-
-### 1. `row_repeat_count`
-Requirement:
-
-- one line buffer, or line hash/signature
-
+### 4. `span_bin_count`
 Definition:
 
 ```text
-row_repeat_count = number of rows that are identical or near-identical to the previous row
+span_bin_count = last_active_bin - first_active_bin + 1
 ```
 
 Meaning:
 
-- horizontal ramp, vertical bars, color bars often repeat the same line many times
+- wide for full or near-full ramps
+- can also be wide for comb-like patterns
 
-Use:
-
-- strong evidence for synthetic structured pattern
-
-Limitation:
-
-- repeated rows alone do not distinguish ramp from bar pattern
-
-### 2. `monotonic_row_ratio`
+### 5. `active_run_count`
 Definition:
 
-For each row, count whether pixel sequence is monotonic non-decreasing or non-increasing.
+Count the number of non-zero contiguous segments.
+
+Examples:
+
+- `1111111000` -> `1`
+- `1100110011` -> `3`
+
+Meaning:
+
+- small for continuous ramps
+- large for fragmented or comb-like patterns
+
+### 6. `longest_active_run`
+Definition:
 
 ```text
-monotonic_row_ratio = monotonic_row_count / total_rows
+longest_active_run = maximum contiguous active-bin segment length
 ```
 
 Meaning:
 
-- horizontal ramp usually has a very high monotonic row ratio
+- large for dense gradients
+- smaller for fragmented sparse/comb patterns
 
-Use:
-
-- confirm `gray ramp` and `RGB ramp`
-
-Limitation:
-
-- some synthetic but non-ramp patterns are not monotonic
-
-### 3. `sign_flip_count`
+### 7. `hole_count`
 Definition:
-
-During each row scan, compute adjacent difference sign.
 
 ```text
-sign_flip_count += 1 when sign(diff_t) != sign(diff_t-1) and both diffs are non-zero
+hole_count = span_bin_count - active_bin_count
 ```
 
 Meaning:
 
-- ramps have very few sign flips
-- textured natural images have many sign flips
+- near zero for continuous ramps
+- large for alternating-hole or fragmented patterns
 
-Use:
-
-- reject natural textured gradients
-
-Limitation:
-
-- coarse banded patterns may also have low sign-flip counts
-
-### 4. `plateau_run_score`
+### 8. `sum_abs_diff`
 Definition:
-
-Accumulate long same-value runs:
 
 ```text
-plateau_run_score = total number of pixels belonging to runs longer than L
+sum_abs_diff = sum(|hist[i+1] - hist[i]|) over i = 0 .. bin_count-2
 ```
 
 Meaning:
 
-- color bars and banded patterns have long plateaus
+- small for flat, smooth histogram shapes
+- large for jagged, comb, or strongly peaked distributions
 
-Use:
+This is the hardware-oriented form of the earlier "pdf smoothness / flatness" idea.
 
-- confirm `banded pattern` and `color bars`
-
-Limitation:
-
-- low-detail UI or graphics may also produce long runs
-
-### 5. `transition_count_per_row`
+### 9. `max_bin_count`
 Definition:
-
-Count large adjacent jumps in each row:
 
 ```text
-transition_count_per_row = number of |x_t - x_t-1| >= T
+max_bin_count = max(hist[i])
 ```
 
 Meaning:
 
-- color bars usually have a small, stable number of transitions
-- natural content has more irregular transitions
+- large for sparse pattern classes such as color bars or few-level banded patterns
 
-Use:
+## Pattern Classes
+The final classification is split into three classes.
 
-- differentiate synthetic bars from photographs
+### A. `dense_gradient_pattern`
+Target coverage:
 
-Limitation:
+- gray ramp
+- RGB ramp projected to luma
+- continuous gradient test images
 
-- some structured UI content may still overlap
+Histogram shape:
 
-### 6. `boundary_alignment_score`
-Requirement:
+- many active bins
+- wide active span
+- very few runs
+- few or no holes
+- relatively smooth / flat histogram
 
-- line buffer or previous-line transition positions
+### B. `sparse_pattern`
+Target coverage:
 
-Definition:
+- color bars
+- few-level gray banded patterns
+- sparse synthetic level-test patterns
 
-Track whether jump positions remain aligned across rows.
+Histogram shape:
 
-Meaning:
+- small active-bin count
+- often a few dominant peaks
+- usually simple run structure
 
-- color bars and vertical band patterns have highly aligned boundaries
+### C. `comb_sawtooth_pattern`
+Target coverage:
 
-Use:
+- alternating active/zero-bin distributions
+- comb-shaped histograms
+- sawtooth / missing-level synthetic patterns
 
-- strong confirmation for `color bars` and vertical synthetic stripes
+Example:
 
-Limitation:
+```text
+(0,200), (1,0), (2,200), (3,0), (4,200), ...
+```
 
-- requires slightly more control logic than simple counters
+Histogram shape:
 
-## Recommended Pattern Classes And Rules
-Below are the recommended hardware-oriented rules.
+- span can be wide
+- many holes inside the span
+- many short runs
+- strong adjacent-bin fluctuations
 
-### A. Gray Ramp
-Stage-1 candidate:
+## Final Decision Logic
+The final output rule is:
 
-- `active_bin_count` high
-- `max_bin_ratio` low
-- `hist_uniformity_score` low
+```text
+pattern_bypass_flag =
+    dense_gradient_pattern
+    OR sparse_pattern
+    OR comb_sawtooth_pattern
+```
 
-Stage-2 confirm:
+This logic is intentionally recall-oriented.
 
-- `row_repeat_count` high or near-full
-- `monotonic_row_ratio` high
-- `sign_flip_count` low
+## First-Pass Decision Skeleton
+The first-pass baseline should avoid overcomplicating the control path.
 
-Decision:
+### `dense_gradient_pattern`
 
-- `pattern_type = gray_ramp`
-- `pattern_bypass = 1`
+```text
+active_bin_count >= T_dense_active
+AND span_bin_count >= T_dense_span
+AND active_run_count <= T_dense_runs
+AND hole_count <= T_dense_holes
+```
 
-### B. RGB Ramp
-Stage-1 candidate:
+### `sparse_pattern`
 
-- one channel has high `active_bin_count`
-- the other channels are nearly constant or sparse
+```text
+active_bin_count <= T_sparse_active
+```
 
-Stage-2 confirm:
+### `comb_sawtooth_pattern`
 
-- high line repeat
-- strong monotonicity along main scan direction
-- low sign-flip count
+```text
+span_bin_count >= T_comb_span
+AND hole_count * K_comb_hole >= span_bin_count
+AND active_run_count >= T_comb_runs
+```
 
-Decision:
+This is the first-pass rule skeleton.
 
-- `pattern_type = rgb_ramp`
-- `pattern_bypass = 1`
+## Second-Pass Tightening Features
+After the first pass catches the major test-pattern classes, the following constraints can be added to tighten the boundary.
 
-### C. Gray Banded Pattern
-Stage-1 candidate:
+### `dense_gradient_pattern` tightening
 
-- `active_bin_count` low to medium
-- `peak_bin_count` small
-- `max_bin_ratio` high
+```text
+sum_abs_diff <= K_dense_flat * mean_active_ref
+```
 
-Stage-2 confirm:
+Interpretation:
 
-- high plateau score
-- low, stable transition count
-- repeated rows or repeated columns
+- the histogram should remain relatively flat and smooth
 
-Decision:
+### `sparse_pattern` tightening
 
-- `pattern_type = gray_banded`
-- `pattern_bypass = 1`
+```text
+max_bin_count * K_sparse_peak >= total_pixel_count
+```
 
-### D. Color Bars
-Stage-1 candidate:
+Interpretation:
 
-- strong sparse peaks in `R/G/B`
-- low to medium channel-wise active-bin counts
+- at least one histogram peak should be sufficiently dominant
 
-Stage-2 confirm:
+### `comb_sawtooth_pattern` tightening
 
-- strong plateau score
-- low transition count per row
-- high boundary alignment score
-- high row repeat
+```text
+sum_abs_diff >= K_comb_flat * mean_active_ref
+```
 
-Decision:
+Interpretation:
 
-- `pattern_type = color_bars`
-- `pattern_bypass = 1`
+- adjacent-bin fluctuation should be clearly strong
 
-### E. Pattern Combination
-Definition:
+## Threshold Search Guidance
+Thresholds should be searched in stages rather than all at once.
 
-- combinations of ramps, bars, banded blocks, and artificial structured regions
+### Stage 1: Coarse structural separation
+Search first:
 
-Recommendation:
+- `T_dense_active`
+- `T_dense_span`
+- `T_dense_runs`
+- `T_dense_holes`
+- `T_sparse_active`
+- `T_comb_span`
+- `K_comb_hole`
+- `T_comb_runs`
 
-- do not try to solve this with one weak heuristic
-- require both:
-  - Stage-1 pattern candidate
-  - at least two independent Stage-2 confirmations
+Goal:
 
-Decision:
+- separate dense gradients, sparse patterns, and comb patterns with simple structural signals
 
-- `pattern_type = pattern_combo`
-- `pattern_bypass = 1`
+### Stage 2: Boundary tightening
+Then search:
 
-## False-Positive Guard Rails
-The system must avoid bypassing natural photographs.
+- `K_dense_flat`
+- `K_sparse_peak`
+- `K_comb_flat`
 
-Recommended guard rails:
+Goal:
 
-- Do not bypass from histogram only.
-- Require at least one spatial confirmation feature.
-- Treat `smooth but textured` gradients as non-pattern:
-  - if sign-flip count is high enough, reject bypass
-- Treat `small-object two-tone frames` as non-pattern:
-  - two-level content alone is not enough
-- For color bars, require boundary alignment, not just sparse histograms.
+- tighten false positives only after target-pattern recall is already high
 
-## Hardware Cost Guidance
-Approximate implementation cost by block:
+## Recommended Search Ranges
+These are search ranges, not final values.
 
-### Lowest Cost
-- global histogram
-- `active_bin_count`
-- `max_bin_ratio`
-- `peak_bin_count`
+### Dense-gradient parameters
+- `T_dense_active`: `14 ~ 24`
+- `T_dense_span`: `16 ~ 28`
+- `T_dense_runs`: `1 ~ 3`
+- `T_dense_holes`: `0 ~ 4`
 
-### Low-to-Medium Cost
-- previous-pixel difference logic
-- sign-flip counter
-- plateau-run counter
-- transition counter
+### Sparse-pattern parameters
+- `T_sparse_active`: `2 ~ 8`
 
-### Medium Cost But Still Hardware-Friendly
-- one line buffer or line-signature buffer
-- row-repeat comparison
-- boundary-alignment comparison
+### Comb-pattern parameters
+- `T_comb_span`: `10 ~ 24`
+- `T_comb_runs`: `4 ~ 12`
 
-### Not Recommended For First Version
-- full-frame spatial analysis
-- tile buffering
-- morphology-like connected-component logic
+The multiplier-style constants should be searched as small discrete bands rather than continuous values:
 
-## Recommended Bring-Up Order
-Implement in this order:
+- `K_dense_flat`: strict / medium / relaxed
+- `K_sparse_peak`: medium / high / very_high
+- `K_comb_hole`: medium / high / very_high
+- `K_comb_flat`: medium / high / very_high
 
-1. gray ramp
-2. gray banded pattern
-3. RGB ramp
-4. color bars
-5. pattern combination
+## Integer-Only Implementation Rule
+The hardware-oriented rule set should avoid floating-point and avoid real division.
+
+All ratio-style comparisons should be converted into cross-multiplication form.
+
+Examples:
+
+Instead of:
+
+```text
+hole_count / span_bin_count >= a / b
+```
+
+use:
+
+```text
+hole_count * b >= span_bin_count * a
+```
+
+Instead of:
+
+```text
+sum_abs_diff / mean_active_ref <= c
+```
+
+use an equivalent integer comparison based on:
+
+```text
+sum_abs_diff <= c * mean_active_ref
+```
+
+## Tuning Priority
+The validation priority should follow this order:
+
+1. make `dense_gradient_pattern` high recall
+2. make `comb_sawtooth_pattern` high recall
+3. add `sparse_pattern`
+4. only then tighten with flatness / peak constraints
 
 Reason:
 
-- the first three are easier to express with simple counters and line-wise monotonic checks
-- color bars need slightly richer spatial confirmation
-- pattern combinations should be added last because their ambiguity is highest
+- the most explicit current weakness is gradient/pattern handling
+- dense and comb cases should be solved first
+- sparse-pattern refinement can follow
 
-## Python Simulation Guidance
-The Python reference path should eventually simulate the hardware-oriented version using:
+## Validation Buckets
+Evaluation should be bucketed by intent rather than only reporting global averages.
 
-- histogram-derived candidate flags
-- streaming-compatible structural features
-- no dependence on full-frame 2D pattern templates
+Recommended buckets:
 
-This is a different target from the current convenient software-only pattern detector. The software detector is useful for rapid validation, but the long-term hardware handoff should match the above feature set.
+- `dense_gradient_target`
+- `sparse_pattern_target`
+- `comb_target`
+- `non_target_reference`
 
-## Recommended Next Step
-Next implementation step:
+Primary metrics:
 
-- replace the current software-convenient pattern bypass with a `hardware-friendly simulation mode`
-- keep the rule split explicit:
-  - `stage1_histogram_candidate`
-  - `stage2_streaming_confirmation`
-  - `pattern_bypass`
+- target interception rate
+- non-target over-bypass rate
 
-This allows direct comparison between:
+Because the current project priority is high recall on synthetic patterns, optimization should prefer raising interception rate first.
 
-- current convenient software detector
-- future hardware-oriented detector
+## Final Baseline Summary
+The agreed baseline is:
 
-and reduces risk when the algorithm is handed off to MATLAB / RTL / DDIC implementation teams.
+- use `32-bin luma histogram`
+- use histogram-only pattern bypass
+- classify into:
+  - `dense_gradient_pattern`
+  - `sparse_pattern`
+  - `comb_sawtooth_pattern`
+- assert:
+
+```text
+pattern_bypass_flag =
+    dense_gradient_pattern
+    OR sparse_pattern
+    OR comb_sawtooth_pattern
+```
+
+- tune thresholds in two stages:
+  - first structural thresholds
+  - then flatness / peak tightening
+
+This document is the baseline contract for the next implementation step.

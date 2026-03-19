@@ -116,7 +116,7 @@
   - `Frame N+1` applies a single LUT
 - Why keep it:
   - best fit for DDIC implementation constraints
-  - already aligned with the current repo's `src/ddic_ce/reference_model.py`
+  - already aligned with the current repo's `scheme3/src/ce_scheme3/reference_model.py`
 - Risk:
   - purely global mapping may not handle mixed dark/bright content well
 

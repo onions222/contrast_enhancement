@@ -10,7 +10,7 @@
 
 - [硬件友好对比度增强研究.md](/Users/onion/Desktop/code/Contrast/docs/research/硬件友好对比度增强研究.md)
 - [2026-03-16-ddic-contrast-enhancement-research-notes.md](/Users/onion/Desktop/code/Contrast/docs/research/2026-03-16-ddic-contrast-enhancement-research-notes.md)
-- [discrete_scene_gain.py](/Users/onion/Desktop/code/Contrast/src/ddic_ce_float/discrete_scene_gain.py)
+- [discrete_scene_gain_float.py](/Users/onion/Desktop/code/Contrast/scheme3/src/ce_scheme3/discrete_scene_gain_float.py)
 
 写作目标不是立刻拍板唯一算法，而是：
 

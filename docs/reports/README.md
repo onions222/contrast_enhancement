@@ -10,5 +10,5 @@ This directory stores generated validation artifacts for the DDIC contrast enhan
 
 ## Reporting rules
 - keep generated reports versioned by date or round number
-- keep metric names consistent with `src/ddic_ce/metrics.py`
+- keep metric names consistent with `scheme3/src/ce_scheme3/metrics.py`
 - include both still-image and temporal-sequence evidence when available

@@ -1,7 +1,7 @@
 # Python 浮点版对比度增强算法可靠性测试文档
 
 ## 目标
-这份文档定义当前仓库中 Python 浮点版对比度增强算法的可靠性测试范围、测试原因、执行方式、判据，以及当前一轮实现后的结果解释。范围只覆盖 [discrete_scene_gain.py](/Users/onion/Desktop/code/Contrast/src/ddic_ce_float/discrete_scene_gain.py) 及其 Python 测试，不包含 MATLAB、硬件运行时、RTL。
+这份文档定义当前仓库中 Python 浮点版对比度增强算法的可靠性测试范围、测试原因、执行方式、判据，以及当前一轮实现后的结果解释。范围只覆盖 [discrete_scene_gain_float.py](/Users/onion/Desktop/code/Contrast/scheme3/src/ce_scheme3/discrete_scene_gain_float.py) 及其 Python 测试，不包含 MATLAB、硬件运行时、RTL。
 
 核心问题：
 - 场景识别是否稳健。
@@ -31,7 +31,7 @@
 
 ## 测试方法
 ### 1. 静态 contract 检查
-- 位置：[test_float_scene_config_contract.py](/Users/onion/Desktop/code/Contrast/tests/test_float_scene_config_contract.py)
+- 位置：[test_float_scene_config_contract.py](/Users/onion/Desktop/code/Contrast/scheme3/tests/test_float_scene_config_contract.py)
 - 目的：锁定当前浮点路径的门限、curve family、strength、gain 上限。
 - 判据：
   - 默认阈值和 knots 必须匹配当前基线。
@@ -39,7 +39,7 @@
   - 四个 scene 的 tone/gain 快照必须稳定。
 
 ### 2. 单帧场景分类与 bypass
-- 位置：[test_float_scene_classification_boundaries.py](/Users/onion/Desktop/code/Contrast/tests/test_float_scene_classification_boundaries.py)、[test_float_scene_bypass.py](/Users/onion/Desktop/code/Contrast/tests/test_float_scene_bypass.py)
+- 位置：[test_float_scene_classification_boundaries.py](/Users/onion/Desktop/code/Contrast/scheme3/tests/test_float_scene_classification_boundaries.py)、[test_float_scene_bypass.py](/Users/onion/Desktop/code/Contrast/scheme3/tests/test_float_scene_bypass.py)
 - 方法：
   - 用占比和亮度参数化构造 100 样本的 synthetic frame。
   - 直接读取 `raw_scene_name / scene_name / bypass_flag / stats`。
@@ -50,7 +50,7 @@
   - `2%` 暗目标目前仍会 bypass，这被保留为“已知行为”，便于后续继续评估。
 
 ### 3. Curve / Gain 规则检查
-- 位置：[test_float_scene_curves.py](/Users/onion/Desktop/code/Contrast/tests/test_float_scene_curves.py)、[test_float_scene_gain_lut.py](/Users/onion/Desktop/code/Contrast/tests/test_float_scene_gain_lut.py)
+- 位置：[test_float_scene_curves.py](/Users/onion/Desktop/code/Contrast/scheme3/tests/test_float_scene_curves.py)、[test_float_scene_gain_lut.py](/Users/onion/Desktop/code/Contrast/scheme3/tests/test_float_scene_gain_lut.py)
 - 方法：
   - 直接检查预生成 scene curve 与 gain LUT。
   - 评估单调性、端点、一阶/二阶差分、最大 gain。
@@ -60,7 +60,7 @@
   - 不允许出现局部尖峰。
 
 ### 4. Pattern 质量测试
-- 位置：[test_float_scene_patterns_quality.py](/Users/onion/Desktop/code/Contrast/tests/test_float_scene_patterns_quality.py)
+- 位置：[test_float_scene_patterns_quality.py](/Users/onion/Desktop/code/Contrast/scheme3/tests/test_float_scene_patterns_quality.py)
 - 方法：
   - 用 ramp、高调 bucket、暗噪声 bucket 直接比较增强前后。
   - 统计唯一级数、最大 plateau、`bright_ratio`、`p99`、noise std ratio。
@@ -71,9 +71,9 @@
   - 暗噪声 bucket 的最大 `std_ratio <= 1.35`。
 
 ### 5. 时序稳定性
-- 位置：[test_float_scene_temporal.py](/Users/onion/Desktop/code/Contrast/tests/test_float_scene_temporal.py)
+- 位置：[test_float_scene_temporal.py](/Users/onion/Desktop/code/Contrast/scheme3/tests/test_float_scene_temporal.py)
 - 方法：
-  - 通过 [temporal_runner.py](/Users/onion/Desktop/code/Contrast/src/ddic_ce/temporal_runner.py) 复用同一个模型实例跑序列。
+  - 通过 [temporal_runner.py](/Users/onion/Desktop/code/Contrast/scheme3/src/ce_scheme3/temporal_runner.py) 复用同一个模型实例跑序列。
   - 观测 `raw_scene_name / scene_name / lut_mean_abs_delta / enhanced_plane delta`。
 - 判据：
   - 非边界慢漂移不允许出现 scene flip。
@@ -81,7 +81,7 @@
   - scene-cut 必须在均值突变帧立即切换。
 
 ### 6. RGB 路径
-- 位置：[test_float_scene_rgb_quality.py](/Users/onion/Desktop/code/Contrast/tests/test_float_scene_rgb_quality.py)
+- 位置：[test_float_scene_rgb_quality.py](/Users/onion/Desktop/code/Contrast/scheme3/tests/test_float_scene_rgb_quality.py)
 - 方法：
   - 用同色 RGB flat 和肤色 patch 检查 `rgb_out`。
   - 计算 clip ratio 和 channel ratio drift。
@@ -91,17 +91,17 @@
 
 ## 当前一轮结果
 ### 已经实现的测试文件
-- [conftest.py](/Users/onion/Desktop/code/Contrast/tests/conftest.py)
-- [float_scene_test_utils.py](/Users/onion/Desktop/code/Contrast/tests/float_scene_test_utils.py)
-- [test_float_scene_config_contract.py](/Users/onion/Desktop/code/Contrast/tests/test_float_scene_config_contract.py)
-- [test_float_scene_classification_boundaries.py](/Users/onion/Desktop/code/Contrast/tests/test_float_scene_classification_boundaries.py)
-- [test_float_scene_bypass.py](/Users/onion/Desktop/code/Contrast/tests/test_float_scene_bypass.py)
-- [test_float_scene_curves.py](/Users/onion/Desktop/code/Contrast/tests/test_float_scene_curves.py)
-- [test_float_scene_gain_lut.py](/Users/onion/Desktop/code/Contrast/tests/test_float_scene_gain_lut.py)
-- [test_float_scene_patterns_quality.py](/Users/onion/Desktop/code/Contrast/tests/test_float_scene_patterns_quality.py)
-- [test_float_scene_temporal.py](/Users/onion/Desktop/code/Contrast/tests/test_float_scene_temporal.py)
-- [test_float_scene_rgb_quality.py](/Users/onion/Desktop/code/Contrast/tests/test_float_scene_rgb_quality.py)
-- [test_float_scene_batch_quality.py](/Users/onion/Desktop/code/Contrast/tests/test_float_scene_batch_quality.py)
+- [conftest.py](/Users/onion/Desktop/code/Contrast/scheme3/tests/conftest.py)
+- [float_scene_test_utils.py](/Users/onion/Desktop/code/Contrast/scheme3/tests/float_scene_test_utils.py)
+- [test_float_scene_config_contract.py](/Users/onion/Desktop/code/Contrast/scheme3/tests/test_float_scene_config_contract.py)
+- [test_float_scene_classification_boundaries.py](/Users/onion/Desktop/code/Contrast/scheme3/tests/test_float_scene_classification_boundaries.py)
+- [test_float_scene_bypass.py](/Users/onion/Desktop/code/Contrast/scheme3/tests/test_float_scene_bypass.py)
+- [test_float_scene_curves.py](/Users/onion/Desktop/code/Contrast/scheme3/tests/test_float_scene_curves.py)
+- [test_float_scene_gain_lut.py](/Users/onion/Desktop/code/Contrast/scheme3/tests/test_float_scene_gain_lut.py)
+- [test_float_scene_patterns_quality.py](/Users/onion/Desktop/code/Contrast/scheme3/tests/test_float_scene_patterns_quality.py)
+- [test_float_scene_temporal.py](/Users/onion/Desktop/code/Contrast/scheme3/tests/test_float_scene_temporal.py)
+- [test_float_scene_rgb_quality.py](/Users/onion/Desktop/code/Contrast/scheme3/tests/test_float_scene_rgb_quality.py)
+- [test_float_scene_batch_quality.py](/Users/onion/Desktop/code/Contrast/scheme3/tests/test_float_scene_batch_quality.py)
 
 ### 本轮发现并处理的失败点
 失效现象：
@@ -124,37 +124,37 @@
 推荐命令：
 
 ```bash
-pytest -q tests/test_float_scene_config_contract.py \
-  tests/test_float_scene_classification_boundaries.py \
-  tests/test_float_scene_bypass.py \
-  tests/test_float_scene_curves.py \
-  tests/test_float_scene_gain_lut.py \
-  tests/test_float_scene_patterns_quality.py \
-  tests/test_float_scene_temporal.py \
-  tests/test_float_scene_rgb_quality.py \
-  tests/test_float_scene_batch_quality.py
+pytest -q scheme3/tests/test_float_scene_config_contract.py \
+  scheme3/tests/test_float_scene_classification_boundaries.py \
+  scheme3/tests/test_float_scene_bypass.py \
+  scheme3/tests/test_float_scene_curves.py \
+  scheme3/tests/test_float_scene_gain_lut.py \
+  scheme3/tests/test_float_scene_patterns_quality.py \
+  scheme3/tests/test_float_scene_temporal.py \
+  scheme3/tests/test_float_scene_rgb_quality.py \
+  scheme3/tests/test_float_scene_batch_quality.py
 ```
 
 完整相关 Python 回归：
 
 ```bash
-pytest -q tests/test_reference_model.py \
-  tests/test_candidate_models.py \
-  tests/test_float_scene_model.py \
-  tests/test_metrics.py \
-  tests/test_patterns.py \
-  tests/test_temporal_runner.py \
-  tests/test_batch_runner.py \
-  tests/test_image_io.py \
-  tests/test_float_scene_config_contract.py \
-  tests/test_float_scene_classification_boundaries.py \
-  tests/test_float_scene_bypass.py \
-  tests/test_float_scene_curves.py \
-  tests/test_float_scene_gain_lut.py \
-  tests/test_float_scene_patterns_quality.py \
-  tests/test_float_scene_temporal.py \
-  tests/test_float_scene_rgb_quality.py \
-  tests/test_float_scene_batch_quality.py
+pytest -q scheme3/tests/test_reference_model.py \
+  scheme3/tests/test_candidate_models.py \
+  scheme3/tests/test_float_scene_model.py \
+  scheme3/tests/test_metrics.py \
+  scheme3/tests/test_patterns.py \
+  scheme3/tests/test_temporal_runner.py \
+  scheme3/tests/test_batch_runner.py \
+  scheme3/tests/test_image_io.py \
+  scheme3/tests/test_float_scene_config_contract.py \
+  scheme3/tests/test_float_scene_classification_boundaries.py \
+  scheme3/tests/test_float_scene_bypass.py \
+  scheme3/tests/test_float_scene_curves.py \
+  scheme3/tests/test_float_scene_gain_lut.py \
+  scheme3/tests/test_float_scene_patterns_quality.py \
+  scheme3/tests/test_float_scene_temporal.py \
+  scheme3/tests/test_float_scene_rgb_quality.py \
+  scheme3/tests/test_float_scene_batch_quality.py
 ```
 
 ## 结果解释规则

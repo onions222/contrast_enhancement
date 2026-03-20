@@ -94,7 +94,7 @@ def test_float_percentile_pwl_public_module_exports_expected_symbols():
     assert hasattr(pkg, "FloatPercentilePwlModel")
 
 
-def test_default_config_is_more_conservative_for_skin_closeup_image():
+def test_default_skin_closeup_path_relies_on_rgb_gain_blend_not_global_gain_cap():
     from ce_scheme1.percentile_pwl import FloatPercentilePwlModel
 
     image_path = (
@@ -104,19 +104,11 @@ def test_default_config_is_more_conservative_for_skin_closeup_image():
     rgb = np.asarray(Image.open(image_path).convert("RGB"), dtype=np.uint8)
     value_plane = rgb.max(axis=2)
 
-    row_start = int(value_plane.shape[0] * 0.32)
-    row_end = int(value_plane.shape[0] * 0.78)
-    col_start = int(value_plane.shape[1] * 0.22)
-    col_end = int(value_plane.shape[1] * 0.78)
-
     model = FloatPercentilePwlModel()
     result = model.process_plane_image(value_plane)
-    mapped = np.asarray(result.mapped_samples, dtype=np.uint8).reshape(value_plane.shape)
 
-    skin_crop = mapped[row_start:row_end, col_start:col_end]
-
-    assert result.stats["gain"] <= 1.0
-    assert float(skin_crop.std()) <= 46.0
+    assert result.stats["gain"] > 1.0
+    assert model.cfg.rgb_gain_blend < 1.0
 
 
 def test_rgb_gain_blend_reduces_skin_closeup_texture_amplification():

@@ -1,6 +1,16 @@
 # 方案一 MATLAB 定点运行时设计
 
-## 目标
+## 文档定位
+
+本文档面向数字 IC 设计、验证和 bring-up 团队。目标不是解释 MATLAB 写法，而是给出方案一控制路径和数据路径的硬件等效语义，包括：
+
+- 输入输出接口
+- 关键寄存器与位宽
+- 帧级控制流程
+- pattern bypass 判定链
+- LUT 生成与时域收敛规则
+
+## 算法目标
 
 把方案一 `Percentile-Anchored PWL` 的算法，整理成适合数字 IC 交接的 MATLAB 定点版控制路径与数据路径。
 
@@ -17,6 +27,37 @@
 - 像素侧只需查表，适合硬件
 - 可以用 `gain_max`、`toe_margin`、`shoulder_margin` 显式保护风险场景
 
+## 模块边界
+
+### 控制路径输入
+
+- `frame_in`
+  - `U8.0` 或经位宽映射后的输入样本
+- `cfg`
+  - 控制寄存器镜像
+- `prev_state`
+  - 上一帧 LUT 和时域状态
+
+### 控制路径输出
+
+- `pattern_bypass_flag`
+- `pattern_bypass_reason`
+- `p_low / p_high`
+- `gain_nominal_q8 / gain_q8`
+- `anchor_low / anchor_high`
+- `tone_lut`
+- `state_out`
+
+### 数据路径输入
+
+- `input_u8`
+- `tone_lut`
+
+### 数据路径输出
+
+- `mapped_frame`
+- `mapped_samples`
+
 ## 数据格式
 
 - 输入像素：`U8.0`
@@ -30,7 +71,7 @@
 - PWL 内部 `y`：`Q8`
 - `tone_lut`：`256 x U8.0`
 
-## 处理流程
+## 帧级处理流程
 
 ### Step 1. 输入归一化与 8bit 映射
 
@@ -109,6 +150,13 @@ histogram32[input_u8 >> 3] = histogram32[input_u8 >> 3] + 1
   - `continuous_artificial`
 - 任一路命中则直接输出 `pattern_bypass_flag = 1`
 
+**输出语义**
+
+- `pattern_bypass_flag = 1`
+  - 当前帧直接走 `identity_lut`
+- `pattern_bypass_flag = 0`
+  - 当前帧继续进入 percentile / gain / PWL 主路径
+
 **工程效果**
 
 - 命中 bypass 时，不再进入 percentile 搜索、gain 计算、anchor 扩展、PWL 生成
@@ -149,6 +197,19 @@ reason = continuous_artificial
 - `uniform_sparse`: pure color、near uniform、极低 DR 二级图
 - `disconnected_comb`: color bars、step16、checker、stripe、comb-like pattern
 - `continuous_artificial`: full ramp、smooth gradient、高级数 step wedge
+
+**硬件映射**
+
+- `mask generation`
+  - 32 个比较器
+- `A / C`
+  - 2 次 popcount
+- `R`
+  - 1 次减法
+- `F`
+  - 首尾活跃索引差分
+- `Pmax`
+  - 32-bin max compare tree
 
 ### Step 3. 构造百分位目标并搜索 `p_low / p_high`
 

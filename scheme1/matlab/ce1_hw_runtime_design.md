@@ -76,6 +76,44 @@ histogram256[input_u8] = histogram256[input_u8] + 1
 histogram32[input_u8 >> 3] = histogram32[input_u8 >> 3] + 1
 ```
 
+### Step 2.5. Pattern bypass 预筛
+
+**目的**
+
+在真正进入 percentile anchor 搜索之前，先排除掉“本来就不应该做增强”的人工 pattern。
+
+这里的核心判断不是“这张图能不能增强”，而是“这张图的码值关系是否应该被保持原样”。
+对 DDIC 来说，很多测试图的任务是验证面板、Gamma、串扰、坏点、均匀性，而不是视觉观感优化。
+因此一旦把这些图送进 CE 主路径，哪怕画面主观上没有明显变差，也可能破坏测试 pattern 本身的意义。
+
+**输入**
+
+- `histogram32`
+- `total_pixels`
+- `pattern_*` 系列寄存器
+
+**处理方式**
+
+- 只基于 32-bin 粗直方图做帧级判断
+- 不引入空间卷积或局部窗口
+- 三路判定分别识别：
+  - `dense gradient`
+  - `sparse pattern`
+  - `comb pattern`
+- 任一路命中则直接输出 `pattern_bypass_flag = 1`
+
+**工程效果**
+
+- 命中 bypass 时，不再进入 percentile 搜索、gain 计算、anchor 扩展、PWL 生成
+- 当前帧直接使用 `identity_lut`
+- 但时域 IIR 仍然保留，用于减轻增强帧和 bypass 帧切换时的 LUT 跳变
+
+**典型命中对象**
+
+- dense gradient: full ramp、near-black ramp、near-white ramp
+- sparse pattern: color bars、gray step、少级数 stepped ramp
+- comb pattern: Bayer-like pattern、梳状分布、部分规则网格图
+
 ### Step 3. 构造百分位目标并搜索 `p_low / p_high`
 
 **目的**

@@ -7,7 +7,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from ce_scheme1.image_io import rgb_to_luma
+from ce_scheme1.image_io import rgb_to_value
 from ce_scheme1.metrics import summarize_plane, summarize_temporal_change
 from ce_scheme1.reference_model import ContrastConfig, ContrastReferenceModel
 
@@ -80,14 +80,14 @@ def run_temporal_directory(
     *,
     model_cls: type[Any] = ContrastReferenceModel,
 ) -> dict[str, object]:
-    """读取目录中的图像序列，转为 luma 后执行时域评估。"""
+    """读取目录中的图像序列，转为 HSV V 平面后执行时域评估。"""
     frames: list[np.ndarray] = []
     names: list[str] = []
     for image_path in sorted(Path(input_dir).iterdir()):
         if image_path.suffix.lower() not in SUPPORTED_EXTENSIONS:
             continue
         rgb = np.asarray(Image.open(image_path).convert("RGB"), dtype=np.uint8)
-        frames.append(rgb_to_luma(rgb))
+        frames.append(rgb_to_value(rgb))
         names.append(image_path.name)
 
     result = run_temporal_sequence(frames, cfg, model_cls=model_cls)

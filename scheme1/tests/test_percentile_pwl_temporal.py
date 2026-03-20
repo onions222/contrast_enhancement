@@ -17,8 +17,8 @@ def test_percentile_pwl_second_frame_reports_smaller_step_with_iir_than_without(
     first = [32] * 64 + [128] * 64 + [196] * 64
     second = [40] * 64 + [136] * 64 + [204] * 64
 
-    smooth_cfg = FloatPercentilePwlConfig(alpha_num=1, alpha_den=4, enable_temporal_smoothing=True)
-    raw_cfg = FloatPercentilePwlConfig(alpha_num=1, alpha_den=4, enable_temporal_smoothing=False)
+    smooth_cfg = FloatPercentilePwlConfig(alpha_num=1, alpha_den=4, enable_temporal_smoothing=True, pattern_bypass_enable=False)
+    raw_cfg = FloatPercentilePwlConfig(alpha_num=1, alpha_den=4, enable_temporal_smoothing=False, pattern_bypass_enable=False)
 
     smooth_model = FloatPercentilePwlModel(smooth_cfg)
     raw_model = FloatPercentilePwlModel(raw_cfg)
@@ -37,7 +37,7 @@ def test_percentile_pwl_second_frame_reports_smaller_step_with_iir_than_without(
 def test_percentile_pwl_reports_gain_fields_in_stats():
     from ce_scheme1.percentile_pwl import FloatPercentilePwlConfig, FloatPercentilePwlModel
 
-    model = FloatPercentilePwlModel(FloatPercentilePwlConfig(alpha_num=1, alpha_den=1))
+    model = FloatPercentilePwlModel(FloatPercentilePwlConfig(alpha_num=1, alpha_den=1, pattern_bypass_enable=False))
     result = model.process_frame([48] * 64 + [96] * 64 + [160] * 64)
 
     assert result.stats["gain_nominal"] >= 0.0

@@ -48,13 +48,13 @@ end
 function golden = local_float_golden(frame, runtime, cfg)
 %LOCAL_FLOAT_GOLDEN 使用未量化 gain 重建浮点 golden。
 % 输入 frame 为 U8.0/U10.0；tone 来自 U8.0 tone_lut；gain 为验证外壳浮点值。
-luma_u8 = ce_hw_helpers('rgb_to_luma8', frame, cfg.input_bit_depth);
-indices = double(luma_u8(:)) + 1;
+value_u8 = ce_hw_helpers('rgb_to_value8', frame, cfg.input_bit_depth);
+indices = double(value_u8(:)) + 1;
 tone = reshape(double(runtime.tone_lut(indices)), [], 1);
 gain = zeros(numel(tone), 1);
-luma_vec = double(luma_u8(:));
-mask = luma_vec > 0;
-gain(mask) = tone(mask) ./ luma_vec(mask);
+value_vec = double(value_u8(:));
+mask = value_vec > 0;
+gain(mask) = tone(mask) ./ value_vec(mask);
 gain(~mask) = 0.0;
 gain = min(max(gain, 0.0), double(cfg.gain_max) / double(cfg.gain_one));
 

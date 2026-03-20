@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from ce_scheme3.image_io import rgb_to_luma
+from ce_scheme3.image_io import rgb_to_value
 from ce_scheme3.metrics import summarize_plane
 
 SUPPORTED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
@@ -32,7 +32,7 @@ class ManifestEntry:
     relative_path: str
     width: int
     height: int
-    mean_luma: float
+    mean_value: float
     dark_ratio: float
     bright_ratio: float
     dynamic_range: float
@@ -99,7 +99,7 @@ def build_manifest_entries(
     entries: list[ManifestEntry] = []
     for image_path in _iter_image_paths(root):
         rgb = _load_rgb(image_path)
-        plane = rgb_to_luma(rgb)
+        plane = rgb_to_value(rgb)
         summary = summarize_plane(plane)
         scene_tag = _infer_scene_tag(summary)
         difficulty_tags = _infer_difficulty_tags(summary, scene_tag)
@@ -122,7 +122,7 @@ def build_manifest_entries(
                 relative_path=relative_path,
                 width=int(rgb.shape[1]),
                 height=int(rgb.shape[0]),
-                mean_luma=float(summary["mean"]),
+                mean_value=float(summary["mean"]),
                 dark_ratio=float(summary["dark_ratio"]),
                 bright_ratio=float(summary["bright_ratio"]),
                 dynamic_range=float(summary["dynamic_range"]),

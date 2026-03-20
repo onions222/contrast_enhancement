@@ -107,3 +107,68 @@ def generate_pattern_suite(width: int = 256, height: int = 256) -> dict[str, dic
         "metadata": {"pattern": "skin_tone_patch"},
     }
     return patterns
+
+
+# ---------------------------------------------------------------------------
+# DDIC temporal transition sequence generators
+# ---------------------------------------------------------------------------
+
+
+def generate_scene_cut_sequence(
+    width: int = 256,
+    height: int = 256,
+    *,
+    from_value: int = 0,
+    to_value: int = 192,
+    frames: int = 5,
+) -> list[np.ndarray]:
+    """生成场景切换序列：前半帧为 from_value，后半帧为 to_value。"""
+    seq: list[np.ndarray] = []
+    mid = max(frames // 2, 1)
+    for i in range(frames):
+        value = from_value if i < mid else to_value
+        seq.append(np.full((height, width), value, dtype=np.uint8))
+    return seq
+
+
+def generate_slow_fade_sequence(
+    width: int = 256,
+    height: int = 256,
+    *,
+    start_dr: int = 0,
+    end_dr: int = 128,
+    center: int = 128,
+    frames: int = 8,
+) -> list[np.ndarray]:
+    """生成缓慢 DR 渐变序列：DR 从 start_dr 线性过渡到 end_dr。"""
+    seq: list[np.ndarray] = []
+    for i in range(frames):
+        t = i / max(frames - 1, 1)
+        dr = start_dr + (end_dr - start_dr) * t
+        half_dr = dr / 2.0
+        low = int(round(max(0, center - half_dr)))
+        high = int(round(min(255, center + half_dr)))
+        plane = np.full((height, width), low, dtype=np.uint8)
+        plane[:, width // 2 :] = high
+        seq.append(plane)
+    return seq
+
+
+def generate_bypass_boundary_oscillation_sequence(
+    width: int = 256,
+    height: int = 256,
+    *,
+    center: int = 128,
+    dr_values: tuple[int, ...] = (3, 5, 3, 5, 3, 5, 3, 5),
+) -> list[np.ndarray]:
+    """生成 DR 在 bypass 阈值附近反复振荡的序列。"""
+    seq: list[np.ndarray] = []
+    for dr in dr_values:
+        half_dr = dr // 2
+        low = max(0, center - half_dr)
+        high = min(255, center + half_dr + (dr % 2))
+        plane = np.full((height, width), low, dtype=np.uint8)
+        plane[:, width // 2 :] = high
+        seq.append(plane)
+    return seq
+

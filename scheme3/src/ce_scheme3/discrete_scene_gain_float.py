@@ -90,11 +90,11 @@ def _normalize_to_8bit(value: int, bit_depth: int) -> int:
     return min(255, clipped << (8 - bit_depth))
 
 
-def _rgb_to_luma8(rgb: Sequence[int], bit_depth: int) -> int:
+def _rgb_to_value8(rgb: Sequence[int], bit_depth: int) -> int:
     r = _normalize_to_8bit(int(rgb[0]), bit_depth)
     g = _normalize_to_8bit(int(rgb[1]), bit_depth)
     b = _normalize_to_8bit(int(rgb[2]), bit_depth)
-    return min(255, (77 * r + 150 * g + 29 * b + 128) >> 8)
+    return max(r, g, b)
 
 
 def _compute_percentile(sorted_samples: list[int], percentile: float) -> float:
@@ -107,7 +107,7 @@ def _compute_percentile(sorted_samples: list[int], percentile: float) -> float:
     return float(sorted_samples[lower]) + blend * (float(sorted_samples[upper]) - float(sorted_samples[lower]))
 
 
-def _summarize_luma_samples(samples: list[int]) -> dict[str, float]:
+def _summarize_value_samples(samples: list[int]) -> dict[str, float]:
     if not samples:
         return {
             "mean": 0.0,
@@ -116,8 +116,8 @@ def _summarize_luma_samples(samples: list[int]) -> dict[str, float]:
             "p2": 0.0,
             "p98": 0.0,
             "dynamic_range": 0.0,
-            "min_luma": 0.0,
-            "max_luma": 0.0,
+            "min_value": 0.0,
+            "max_value": 0.0,
         }
 
     sorted_samples = sorted(samples)
@@ -131,8 +131,8 @@ def _summarize_luma_samples(samples: list[int]) -> dict[str, float]:
         "p2": p2,
         "p98": p98,
         "dynamic_range": p98 - p2,
-        "min_luma": float(sorted_samples[0]),
-        "max_luma": float(sorted_samples[-1]),
+        "min_value": float(sorted_samples[0]),
+        "max_value": float(sorted_samples[-1]),
     }
 
 
@@ -352,17 +352,17 @@ class FloatDiscreteSceneGainModel:
         self._prev_mean = frame_mean
         return self._current_scene_id
 
-    def _normalize_luma_samples(self, samples: Iterable[int]) -> list[int]:
+    def _normalize_value_samples(self, samples: Iterable[int]) -> list[int]:
         return [_normalize_to_8bit(sample, self.cfg.input_bit_depth) for sample in samples]
 
     def _build_frame_result(
         self,
-        luma_samples: list[int],
+        value_samples: list[int],
         *,
         plane: np.ndarray | None = None,
     ) -> FloatDiscreteSceneFrameResult:
-        hist = compute_histogram(luma_samples, self.cfg)
-        stats = _summarize_luma_samples(luma_samples)
+        hist = compute_histogram(value_samples, self.cfg)
+        stats = _summarize_value_samples(value_samples)
         pattern_bypass_flag = plane is not None and self._detect_pattern_bypass(plane)
         bypass_flag = pattern_bypass_flag or stats["dynamic_range"] <= self.cfg.bypass_dynamic_range_threshold
         raw_scene_id = self._classify_scene(stats)
@@ -376,8 +376,8 @@ class FloatDiscreteSceneGainModel:
             gain_lut = self._scene_gain_luts[scene_id]
 
         lut = [round(value) for value in tone_curve]
-        mapped_samples = [round(tone_curve[sample]) for sample in luma_samples]
-        gain_samples = [gain_lut[sample] for sample in luma_samples]
+        mapped_samples = [round(tone_curve[sample]) for sample in value_samples]
+        gain_samples = [gain_lut[sample] for sample in value_samples]
         return FloatDiscreteSceneFrameResult(
             histogram=hist,
             lut=lut,
@@ -394,7 +394,7 @@ class FloatDiscreteSceneGainModel:
         )
 
     def process_frame(self, samples: Iterable[int]) -> FloatDiscreteSceneFrameResult:
-        return self._build_frame_result(self._normalize_luma_samples(samples))
+        return self._build_frame_result(self._normalize_value_samples(samples))
 
     def process_plane_image(self, plane: np.ndarray) -> FloatDiscreteSceneFrameResult:
         plane_u8 = np.asarray(plane, dtype=np.uint8)
@@ -411,8 +411,8 @@ class FloatDiscreteSceneGainModel:
             tuple(_clip_to_bit_depth(int(channel), self.cfg.input_bit_depth) for channel in sample[:3])
             for sample in rgb_samples
         ]
-        luma_samples = [_rgb_to_luma8(sample, self.cfg.input_bit_depth) for sample in rgb_list]
-        frame_result = self._build_frame_result(luma_samples)
+        value_samples = [_rgb_to_value8(sample, self.cfg.input_bit_depth) for sample in rgb_list]
+        frame_result = self._build_frame_result(value_samples)
         gain_mode_enabled = cabc_enabled or aie_enabled
         rgb_out: list[tuple[float, float, float]] | None = None
 
@@ -452,11 +452,11 @@ class FloatDiscreteSceneGainModel:
     ) -> FloatDiscreteSceneRgbResult:
         rgb_u8 = np.asarray(rgb, dtype=np.uint8)
         rgb_list = [tuple(int(channel) for channel in pixel) for pixel in rgb_u8.reshape(-1, 3)]
-        luma_plane = np.asarray(
-            [[_rgb_to_luma8(pixel, self.cfg.input_bit_depth) for pixel in row] for row in rgb_u8.reshape(rgb_u8.shape[0], rgb_u8.shape[1], 3)],
+        value_plane = np.asarray(
+            [[_rgb_to_value8(pixel, self.cfg.input_bit_depth) for pixel in row] for row in rgb_u8.reshape(rgb_u8.shape[0], rgb_u8.shape[1], 3)],
             dtype=np.uint8,
         )
-        frame_result = self._build_frame_result(luma_plane.reshape(-1).tolist(), plane=luma_plane)
+        frame_result = self._build_frame_result(value_plane.reshape(-1).tolist(), plane=value_plane)
         gain_mode_enabled = cabc_enabled or aie_enabled
         rgb_out: list[tuple[float, float, float]] | None = None
 
@@ -486,4 +486,3 @@ class FloatDiscreteSceneGainModel:
             gain_mode_enabled=gain_mode_enabled,
             rgb_out=rgb_out,
         )
-

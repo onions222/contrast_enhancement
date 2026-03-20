@@ -19,7 +19,7 @@
 
 本算法面向显示链路中的本地对比度增强 / gain 输出场景，目标是：
 
-1. 对当前帧进行亮度统计，识别场景类型
+1. 对当前帧进行 HSV `V` 统计，识别场景类型
 2. 根据场景选择一组预定义 tone curve family
 3. 生成 tone LUT 与 gain LUT
 4. 在 gain-only 模式下输出每像素增益
@@ -38,7 +38,7 @@
 | 信号 | 域 | 位宽 | 说明 |
 |---|---|---:|---|
 | `rgb_in` | 原始 RGB 码值域 | 8 或 10 bit | 当前帧输入像素 |
-| `y_in` | 亮度域 | 8 bit | 统计和 LUT 索引使用的统一亮度 |
+| `value_in` | `V` 域 | 8 bit | 统计和 LUT 索引使用的统一 `HSV V` |
 | `cfg` | 配置域 | struct | 阈值、strength、knot、Q 格式等参数 |
 | `prev_state` | 帧级状态域 | 若干寄存器 | 上一帧的 scene hold / scene-cut 状态 |
 | `mode` | 模式控制 | 1 bit 等效 | `gain` 或 `rgb` |
@@ -60,7 +60,7 @@
 
 两套版本遵循相同的算法骨架：
 
-1. 输入归一化到 `Y_8`
+1. 输入归一化到 `V_8`
 2. 计算 `mean / dark_ratio / bright_ratio / P2 / P98`
 3. 判定 `bypass_flag`
 4. 判定 `raw_scene_id`
@@ -88,13 +88,13 @@
 |---|---|---|
 | `R, G, B` | 输入 RGB 通道码值 | 8bit 或 10bit 整数 |
 | `R_8, G_8, B_8` | 归一化到 8bit 域的 RGB 通道 | `[0, 255]` |
-| `Y_8(i)` | 第 `i` 个像素的 8bit 亮度 | `[0, 255]` |
+| `V_8(i)` | 第 `i` 个像素的 8bit `HSV V` | `[0, 255]` |
 | `N` | 当前帧像素总数 | 正整数 |
-| `mean` | 当前帧平均亮度 | `[0, 255]` |
+| `mean` | 当前帧平均 `V` 值 | `[0, 255]` |
 | `dark_ratio` | 暗像素占比 | `[0, 1]` |
 | `bright_ratio` | 亮像素占比 | `[0, 1]` |
-| `P2` | 2% 百分位亮度 | `[0, 255]` |
-| `P98` | 98% 百分位亮度 | `[0, 255]` |
+| `P2` | 2% 百分位 `V` 值 | `[0, 255]` |
+| `P98` | 98% 百分位 `V` 值 | `[0, 255]` |
 | `dynamic_range` | 动态范围估计 | `[0, 255]` |
 | `s_raw` | 瞬时场景分类结果 | `{Normal, Bright, Dark I, Dark II}` |
 | `s_act` | 最终激活场景 | `{Normal, Bright, Dark I, Dark II}` |
@@ -174,14 +174,14 @@ flowchart TD
 算法可以浓缩为下列几组公式：
 
 ```text
-Y_8 = Luma(R, G, B)
-stats = Stat(Y_8)
-bypass = [P98(Y_8) - P2(Y_8) <= Th_bypass]
+V_8 = max(R_8, G_8, B_8)
+stats = Stat(V_8)
+bypass = [P98(V_8) - P2(V_8) <= Th_bypass]
 s_raw = SceneClass(stats)
 s_act = SceneSelect(s_raw, prev_state, mean)
 T_s = Blend(Identity, Family_s, lambda_s)
 G_s(i) = T_s(i) / i, i > 0
-output = GainOnly(G_s(Y_8)) 或 RGBScale(rgb_in, G_s(Y_8))
+output = GainOnly(G_s(V_8)) 或 RGBScale(rgb_in, G_s(V_8))
 ```
 
 后续章节会分别把浮点版和硬件版按处理顺序详细展开。
@@ -198,7 +198,7 @@ output = GainOnly(G_s(Y_8)) 或 RGBScale(rgb_in, G_s(Y_8))
 clip_bit(x, B) = min(max(x, 0), 2^B - 1)
 ```
 
-若输入位宽不是 8bit，则统一映射到 8bit 亮度域：
+若输入位宽不是 8bit，则统一映射到 8bit `V` 域：
 
 ```text
 norm_to_8bit(x, B) =
@@ -207,17 +207,17 @@ norm_to_8bit(x, B) =
     min(255, x * 2^(8-B)), B < 8
 ```
 
-亮度计算采用整数近似 BT.601 系数：
+`V` 统计采用逐像素最大通道：
 
 ```text
-Y_8 = clip((77*R_8 + 150*G_8 + 29*B_8 + 128) / 256, 0, 255)
+V_8 = max(R_8, G_8, B_8)
 ```
 
 变量说明：
 
 - `R_8/G_8/B_8`：归一化后的 8bit RGB 通道
 - `128`：用于四舍五入到最近整数
-- `Y_8`：供统计和 LUT 索引使用的统一亮度
+- `V_8`：供统计和 LUT 索引使用的统一 `HSV V`
 
 本步骤的目的不是视觉增强，而是把不同输入位宽统一到相同统计域，保证：
 
@@ -227,19 +227,19 @@ Y_8 = clip((77*R_8 + 150*G_8 + 29*B_8 + 128) / 256, 0, 255)
 
 ### 4.2 Step 2: 计算帧级统计量
 
-对一帧共 `N` 个亮度样本 `Y_8(i)`，逐项计算：
+对一帧共 `N` 个 `V` 域样本 `V_8(i)`，逐项计算：
 
 ```text
-mean = (1/N) * Σ Y_8(i)
-dark_ratio = count(Y_8(i) <= 63) / N
-bright_ratio = count(Y_8(i) >= 192) / N
+mean = (1/N) * Σ V_8(i)
+dark_ratio = count(V_8(i) <= 63) / N
+bright_ratio = count(V_8(i) >= 192) / N
 ```
 
 为了估计动态范围，还要计算百分位：
 
 ```text
-P2  = percentile(Y_8, 2)
-P98 = percentile(Y_8, 98)
+P2  = percentile(V_8, 2)
+P98 = percentile(V_8, 98)
 dynamic_range = P98 - P2
 ```
 
@@ -459,7 +459,7 @@ gain_max = 1.75
 对每个像素先查表：
 
 ```text
-g(i) = G_s(Y_8(i))
+g(i) = G_s(V_8(i))
 ```
 
 若是 gain-only 模式，则：
@@ -487,12 +487,12 @@ B'(i) = min(B(i) * g(i), max_code)
 
 硬件版本严格复用浮点版的算法顺序，但把关键量收敛到固定 Q 格式。
 
-### 5.1 Step 1: 统一到统计域 `Y_8`
+### 5.1 Step 1: 统一到统计域 `V_8`
 
-硬件控制路径和数据路径都以 `Y_8` 作为统一索引域：
+硬件控制路径和数据路径都以 `V_8` 作为统一索引域：
 
 ```text
-Y_8 = clip((77*R_8 + 150*G_8 + 29*B_8 + 128) >> 8)
+V_8 = max(R_8, G_8, B_8)
 ```
 
 其中：
@@ -512,9 +512,9 @@ Y_8 = clip((77*R_8 + 150*G_8 + 29*B_8 + 128) >> 8)
 控制路径统计量与浮点版一致：
 
 ```text
-mean = (1/N) * ΣY_8(i)
-dark_ratio = count(Y_8(i) <= 63) / N
-bright_ratio = count(Y_8(i) >= 192) / N
+mean = (1/N) * ΣV_8(i)
+dark_ratio = count(V_8(i) <= 63) / N
+bright_ratio = count(V_8(i) >= 192) / N
 dynamic_range = P98 - P2
 ```
 
@@ -653,12 +653,12 @@ gain_lut[0] = 0
 若工作在 gain-only 模式，则数据路径只做：
 
 ```text
-gain_out(i) = gain_lut[Y_8(i)]
+gain_out(i) = gain_lut[V_8(i)]
 ```
 
 这条路径最简单，等价于：
 
-1. 计算 / 获取 `Y_8`
+1. 计算 / 获取 `V_8`
 2. 查 `gain_lut`
 3. 输出 `U1.10` 码值
 
@@ -674,7 +674,7 @@ gain_out(i) = gain_lut[Y_8(i)]
 设：
 
 - 输入通道码值为 `C_in`
-- 查表增益码值为 `g_code = gain_lut[Y_8]`
+- 查表增益码值为 `g_code = gain_lut[V_8]`
 - 小数位数为 `F = 10`
 
 则：
@@ -730,7 +730,7 @@ B_out = sat((B_in * g_code + 2^9) >> 10)
 
 | 信号 | 含义 | 实际范围 | Q 格式 | 编码范围 | 位宽 | 舍入 | 饱和 |
 |---|---|---:|---|---:|---:|---|---|
-| `Y_8` | 归一化亮度 | `[0,255]` | `U8.0` | `0..255` | 8 | `/256` + round | clip |
+| `V_8` | 归一化 `HSV V` | `[0,255]` | `U8.0` | `0..255` | 8 | `max(R_8,G_8,B_8)` | clip |
 | `tone_lut[i]` | tone LUT 输出 | `[0,255]` | `U8.0` | `0..255` | 8 | `round` | clip |
 | `gain_lut[i]` | 增益 LUT | `[0,1.75]` | `U1.10` | `0..1792` | 11 | `round` | clip |
 | `mean` | 帧均值 | `[0,255]` | 建议 `Q8.8` | 设计相关 | 16 | round | clip |
@@ -741,7 +741,7 @@ B_out = sat((B_in * g_code + 2^9) >> 10)
 
 ### 7.2 溢出与精度分析
 
-1. `Y_8` 计算
+1. `V_8` 计算
    - 最大值为 `77*255 + 150*255 + 29*255 + 128 = 65280 + 128`
    - 右移 8 位后最大不超过 `255`
    - 16bit 中间寄存即可覆盖
@@ -811,7 +811,7 @@ B_out = sat((B_in * g_code + 2^9) >> 10)
 |---|---|---|
 | `ce_hw_config` | 配置寄存器 / 常量 ROM | 保存阈值、strength、knot、Q 格式 |
 | `ce_hw_control_update` | 控制路径 | 统计、分类、hold、tone/gain LUT 生成 |
-| `ce_hw_datapath` | 像素数据路径 | `Y_8` 索引、gain 查表、乘法、round、饱和 |
+| `ce_hw_datapath` | 像素数据路径 | `V_8` 索引、gain 查表、乘法、round、饱和 |
 | `ce_hw_helpers` | 建模辅助 | MATLAB 仿真辅助，不直接映射独立模块 |
 
 ## 10. 详细流程图
@@ -821,7 +821,7 @@ B_out = sat((B_in * g_code + 2^9) >> 10)
 ```mermaid
 flowchart TD
   A["输入 RGB / 灰度样本"] --> B["裁剪到合法位宽"]
-  B --> C["归一化到 8bit 亮度域"]
+  B --> C["归一化到 8bit V 域"]
   C --> D["计算 Y8"]
   D --> E["统计 mean / dark_ratio / bright_ratio / P2 / P98"]
   E --> F{"dynamic_range <= 4 ?"}

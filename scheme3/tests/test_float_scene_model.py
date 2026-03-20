@@ -58,7 +58,7 @@ def test_float_scene_model_outputs_gain_only_or_rgb_by_mode():
     assert rgb_result.rgb_out[0][0] == rgb_frame[0][0] * rgb_result.gain_samples[0]
 
 
-def test_float_scene_model_normalizes_10bit_rgb_to_8bit_luma_domain():
+def test_float_scene_model_normalizes_10bit_rgb_to_8bit_value_domain():
     from ce_scheme3.discrete_scene_gain_float import FloatDiscreteSceneGainConfig, FloatDiscreteSceneGainModel
 
     model = FloatDiscreteSceneGainModel(FloatDiscreteSceneGainConfig(input_bit_depth=10, scene_hold_enable=False))
@@ -66,6 +66,6 @@ def test_float_scene_model_normalizes_10bit_rgb_to_8bit_luma_domain():
 
     result = model.process_rgb_frame(rgb_frame, cabc_enabled=True, aie_enabled=False)
 
-    assert result.stats["min_luma"] == 0.0
-    assert result.stats["max_luma"] == 255.0
+    assert result.stats["min_value"] == 0.0
+    assert result.stats["max_value"] == 255.0
     assert 120.0 <= result.stats["mean"] <= 135.0

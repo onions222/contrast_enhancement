@@ -1,7 +1,7 @@
 function out = ce_hw_datapath(input_frame, runtime, cfg, mode)
 %CE_HW_DATAPATH 像素级数据路径仿真函数。
 % 职责：
-%   1. 将输入样本转换到 LUT 索引域 Y_8
+%   1. 将输入样本转换到 LUT 索引域 V_8
 %   2. 从 runtime.gain_lut 中查出每像素 gain_samples_code
 %   3. 根据 mode 选择输出 gain-only 或执行 gain x RGB
 %   4. 对乘法结果执行 round 和饱和
@@ -18,7 +18,7 @@ function out = ce_hw_datapath(input_frame, runtime, cfg, mode)
 %   - mode: 'gain' 或 'rgb'
 %
 % 输出参数：
-%   - out.luma_u8            : U8.0
+%   - out.value_u8           : U8.0
 %   - out.gain_samples_code  : U1.10
 %   - out.gain_samples_f     : 调试用浮点外壳
 %   - out.gain_out           : U1.10
@@ -41,21 +41,21 @@ end
 if size(input_frame, 2) == 3
     % rgb_in: 原始输入码值，推荐 U8.0/U10.0，MATLAB 中使用 int32 便于后续乘法。
     rgb_in = int32(input_frame);
-    luma_u8 = ce_hw_helpers('rgb_to_luma8', rgb_in, cfg.input_bit_depth);
+    value_u8 = ce_hw_helpers('rgb_to_value8', rgb_in, cfg.input_bit_depth);
 else
     rgb_in = [];
-    luma_u8 = ce_hw_helpers('normalize_to_u8', input_frame(:), cfg.input_bit_depth);
+    value_u8 = ce_hw_helpers('normalize_to_u8', input_frame(:), cfg.input_bit_depth);
 end
 
 % indices: LUT 地址，取值范围 1..256，对应硬件中的 8 bit 索引 + MATLAB 1-based 偏移。
-indices = double(luma_u8(:)) + 1;
+indices = double(value_u8(:)) + 1;
 % gain_samples_code: U1.10，每像素查表得到的 gain 码值。
 gain_samples_code = double(runtime.gain_lut(indices));
 % gain_samples_f: 仅用于 debug / 可视化，不属于核心硬件路径。
 gain_samples_f = gain_samples_code / double(cfg.gain_one);
 
 out = struct();
-out.luma_u8 = uint8(luma_u8(:));
+out.value_u8 = uint8(value_u8(:));
 out.gain_samples_code = uint16(gain_samples_code);
 out.gain_samples_f = gain_samples_f;
 out.gain_mode_enabled = strcmpi(mode, 'gain');

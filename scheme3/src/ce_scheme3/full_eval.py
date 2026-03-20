@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw
 
-from ce_scheme3.image_io import rgb_to_luma
+from ce_scheme3.image_io import rgb_to_value
 from ce_scheme3.metrics import compute_ambe, compute_eme, summarize_plane
 from ce_scheme3.temporal_runner import SUPPORTED_EXTENSIONS
 from ce_scheme3.discrete_scene_gain_float import FloatDiscreteSceneGainConfig, FloatDiscreteSceneGainModel
@@ -72,10 +72,10 @@ def _stable_stem(relative_path: Path) -> str:
 
 
 def _apply_float_gain_to_rgb(rgb: np.ndarray, tone_curve: list[float]) -> np.ndarray:
-    y_in = rgb_to_luma(rgb)
+    value_in = rgb_to_value(rgb)
     lut = np.asarray(tone_curve, dtype=np.float32)
-    y_out = lut[y_in]
-    gain = y_out / np.maximum(y_in, 1).astype(np.float32)
+    value_out = lut[value_in]
+    gain = value_out / np.maximum(value_in, 1).astype(np.float32)
     rgb_out = np.clip(rgb.astype(np.float32) * gain[..., None], 0, 255)
     return np.rint(rgb_out).astype(np.uint8)
 
@@ -96,7 +96,7 @@ def _channel_ratio_drift(before: np.ndarray, after: np.ndarray) -> float:
     after_sum = np.maximum(after_f.sum(axis=2, keepdims=True), 1.0)
     before_ratio = before_f / before_sum
     after_ratio = after_f / after_sum
-    mask = rgb_to_luma(before) > 8
+    mask = rgb_to_value(before) > 8
     if not np.any(mask):
         return 0.0
     return float(np.mean(np.abs(after_ratio[mask] - before_ratio[mask])))
@@ -167,29 +167,29 @@ def _skin_proxy_shift(before: np.ndarray, after: np.ndarray) -> float:
 
 
 def _compute_metrics(rgb_in: np.ndarray, rgb_out: np.ndarray) -> dict[str, float]:
-    y_in = rgb_to_luma(rgb_in)
-    y_out = rgb_to_luma(rgb_out)
-    before = summarize_plane(y_in)
-    after = summarize_plane(y_out)
-    unique_in = max(int(np.unique(y_in).size), 1)
-    unique_out = max(int(np.unique(y_out).size), 1)
+    value_in = rgb_to_value(rgb_in)
+    value_out = rgb_to_value(rgb_out)
+    before = summarize_plane(value_in)
+    after = summarize_plane(value_out)
+    unique_in = max(int(np.unique(value_in).size), 1)
+    unique_out = max(int(np.unique(value_out).size), 1)
     return {
-        "mean_in": before["mean"],
-        "mean_out": after["mean"],
+        "mean_value_in": before["mean"],
+        "mean_value_out": after["mean"],
         "mean_delta": after["mean"] - before["mean"],
-        "ambe": compute_ambe(y_in, y_out),
-        "eme_delta": compute_eme(y_out) - compute_eme(y_in),
+        "ambe": compute_ambe(value_in, value_out),
+        "eme_delta": compute_eme(value_out) - compute_eme(value_in),
         "dark_ratio_delta": after["dark_ratio"] - before["dark_ratio"],
         "bright_ratio_delta": after["bright_ratio"] - before["bright_ratio"],
-        "highlight_clip_ratio_delta": _clip_ratio(y_out, high_threshold=250) - _clip_ratio(y_in, high_threshold=250),
-        "shadow_clip_ratio_delta": _clip_ratio(y_out, low_threshold=5) - _clip_ratio(y_in, low_threshold=5),
+        "highlight_clip_ratio_delta": _clip_ratio(value_out, high_threshold=250) - _clip_ratio(value_in, high_threshold=250),
+        "shadow_clip_ratio_delta": _clip_ratio(value_out, low_threshold=5) - _clip_ratio(value_in, low_threshold=5),
         "p2_delta": after["p2"] - before["p2"],
         "p98_delta": after["p98"] - before["p98"],
         "unique_level_retention": unique_out / unique_in,
-        "max_plateau_len": float(_max_plateau_len(y_out)),
-        "gradient_step_irregularity": _gradient_step_irregularity(y_out),
-        "shadow_std_gain": _shadow_std_gain(y_in, y_out),
-        "local_contrast_p95_gain": _local_contrast_p95_gain(y_in, y_out),
+        "max_plateau_len": float(_max_plateau_len(value_out)),
+        "gradient_step_irregularity": _gradient_step_irregularity(value_out),
+        "shadow_std_gain": _shadow_std_gain(value_in, value_out),
+        "local_contrast_p95_gain": _local_contrast_p95_gain(value_in, value_out),
         "channel_ratio_drift": _channel_ratio_drift(rgb_in, rgb_out),
         "mean_chroma_delta": _mean_chroma(rgb_out) - _mean_chroma(rgb_in),
         "skin_proxy_shift": _skin_proxy_shift(rgb_in, rgb_out),
@@ -324,7 +324,7 @@ def _build_report(payload: dict[str, object]) -> str:
             "",
             "## 测试方法",
             "",
-            "- 对每张图提取当前图自身的亮度统计，运行 Python float scene/gain 路径，再把 gain 作用回 RGB。",
+            "- 对每张图提取当前图自身的 HSV V 统计，运行 Python float scene/gain 路径，再把 gain 作用回 RGB。",
             "- 同时输出增强图、前后双联图、per-image JSON、汇总 CSV 和风险清单。",
             "- 本轮没有真实时序序列，因此不输出帧间稳定性结论。",
             "",
@@ -449,7 +449,7 @@ def run_float_full_eval(cfg: FloatFullEvalConfig | None = None) -> dict[str, obj
             relative_path = image_path.relative_to(dataset_root)
             relative_path_str = relative_path.as_posix()
             manifest = manifest_lookup.get(relative_path_str) or manifest_lookup.get(image_path.name)
-            frame_result = model.process_plane_image(rgb_to_luma(rgb_in))
+            frame_result = model.process_plane_image(rgb_to_value(rgb_in))
             rgb_out = _apply_float_gain_to_rgb(rgb_in, frame_result.tone_curve)
             metrics = _compute_metrics(rgb_in, rgb_out)
             risk_types, triggered_metrics, risk_score = _classify_risks(
@@ -470,7 +470,7 @@ def run_float_full_eval(cfg: FloatFullEvalConfig | None = None) -> dict[str, obj
                 title_lines=[
                     stem,
                     f"manifest={manifest.get('scene_tag', '-') if isinstance(manifest, dict) else '-'} raw={frame_result.raw_scene_name} out={frame_result.scene_name}",
-                    f"bypass={frame_result.bypass_flag} mean={metrics['mean_out']:.1f} bright_d={metrics['bright_ratio_delta']:.3f}",
+                    f"bypass={frame_result.bypass_flag} mean_v={metrics['mean_value_out']:.1f} bright_d={metrics['bright_ratio_delta']:.3f}",
                 ],
             )
             enhanced_path.parent.mkdir(parents=True, exist_ok=True)
@@ -572,8 +572,8 @@ def run_float_full_eval(cfg: FloatFullEvalConfig | None = None) -> dict[str, obj
         "raw_scene_name",
         "bypass_flag",
         "risk_score",
-        "mean_in",
-        "mean_out",
+        "mean_value_in",
+        "mean_value_out",
         "mean_delta",
         "ambe",
         "eme_delta",

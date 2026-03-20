@@ -133,7 +133,7 @@ def test_discrete_scene_model_multiplies_rgb_when_local_ce_mode_is_enabled():
     assert result.rgb_out[0] == expected_first
 
 
-def test_discrete_scene_model_normalizes_10bit_rgb_to_8bit_luma_stats():
+def test_discrete_scene_model_normalizes_10bit_rgb_to_8bit_value_stats():
     from ce_scheme3.candidate_models import DiscreteSceneGainConfig, DiscreteSceneGainModel
 
     model = DiscreteSceneGainModel(DiscreteSceneGainConfig(input_bit_depth=10, scene_hold_enable=False))
@@ -141,6 +141,6 @@ def test_discrete_scene_model_normalizes_10bit_rgb_to_8bit_luma_stats():
 
     result = model.process_rgb_frame(rgb_frame, cabc_enabled=True, aie_enabled=False)
 
-    assert result.stats["min_luma"] == 0.0
-    assert result.stats["max_luma"] == 255.0
+    assert result.stats["min_value"] == 0.0
+    assert result.stats["max_value"] == 255.0
     assert 120.0 <= result.stats["mean"] <= 135.0

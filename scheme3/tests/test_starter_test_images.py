@@ -18,7 +18,7 @@ def test_build_starter_test_images_creates_manifest_and_eval_subset(tmp_path: Pa
         )
     )
 
-    assert summary["image_count"] == 65
+    assert summary["image_count"] == 106
     assert manifest_path.exists()
     manifest_text = manifest_path.read_text(encoding="utf-8")
     assert "high_key_window_soft.png" in manifest_text
@@ -35,6 +35,10 @@ def test_build_starter_test_images_creates_manifest_and_eval_subset(tmp_path: Pa
     assert (eval_subset_root / "starter_synth_v1" / "gradient" / "rgb_ramp_r_256_horizontal.png").exists()
     assert (eval_subset_root / "starter_synth_v1" / "gradient" / "gray_ramp_32_vertical.png").exists()
     assert (eval_subset_root / "starter_synth_v1" / "normal" / "color_bars_rgbcmykw_vertical.png").exists()
+    assert "ddic_pure_black.png" in manifest_text
+    assert "ddic_smpte_bars.png" in manifest_text
+    assert (eval_subset_root / "starter_synth_v1" / "ddic_boundary" / "ddic_pure_black.png").exists()
+    assert (eval_subset_root / "starter_synth_v1" / "ddic_factory" / "ddic_smpte_bars.png").exists()
 
 
 def test_starter_test_images_include_requested_ramps_and_color_bars():

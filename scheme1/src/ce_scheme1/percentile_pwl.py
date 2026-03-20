@@ -16,6 +16,21 @@ class FloatPercentilePwlConfig(ContrastConfig):
     toe_margin: float = 12.0
     shoulder_margin: float = 12.0
     enable_temporal_smoothing: bool = True
+    pattern_bypass_enable: bool = True
+    pattern_hist_bin_count: int = 32
+    pattern_dense_active_min: int = 14
+    pattern_dense_span_min: int = 16
+    pattern_dense_runs_max: int = 2
+    pattern_dense_holes_max: int = 2
+    pattern_dense_flatness_numer: int = 3
+    pattern_dense_flatness_denom: int = 4
+    pattern_sparse_active_max: int = 6
+    pattern_sparse_peak_numer: int = 2
+    pattern_sparse_peak_denom: int = 5
+    pattern_comb_span_min: int = 10
+    pattern_comb_runs_min: int = 6
+    pattern_comb_hole_numer: int = 1
+    pattern_comb_hole_denom: int = 3
 
 
 @dataclass(frozen=True)
@@ -147,8 +162,128 @@ class FloatPercentilePwlModel:
         self.cfg = cfg or FloatPercentilePwlConfig()
         self.prev_lut: list[int] | None = None
 
-    def _normalize_luma_samples(self, samples: Iterable[int]) -> list[int]:
+    def _normalize_value_samples(self, samples: Iterable[int]) -> list[int]:
         return [_normalize_to_8bit(sample, self.cfg.input_bit_depth) for sample in samples]
+
+    def _pattern_histogram_features(self, value_samples: list[int]) -> dict[str, int]:
+        values = np.array(value_samples, dtype=np.uint8)
+        if values.size == 0:
+            return {
+                "active_bin_count": 0,
+                "first_active_bin": 0,
+                "last_active_bin": 0,
+                "span_bin_count": 0,
+                "active_run_count": 0,
+                "longest_active_run": 0,
+                "hole_count": 0,
+                "sum_abs_diff": 0,
+                "sum_active_count": 0,
+                "max_bin_count": 0,
+                "total_pixel_count": 0,
+            }
+
+        shift = 8 - int(np.log2(self.cfg.pattern_hist_bin_count))
+        hist = np.bincount((values >> shift), minlength=self.cfg.pattern_hist_bin_count)
+        active_mask = hist > 0
+        active_indices = np.flatnonzero(active_mask)
+        sum_abs_diff = int(np.abs(np.diff(hist.astype(np.int32))).sum())
+        if active_indices.size == 0:
+            return {
+                "active_bin_count": 0,
+                "first_active_bin": 0,
+                "last_active_bin": 0,
+                "span_bin_count": 0,
+                "active_run_count": 0,
+                "longest_active_run": 0,
+                "hole_count": 0,
+                "sum_abs_diff": sum_abs_diff,
+                "sum_active_count": 0,
+                "max_bin_count": 0,
+                "total_pixel_count": int(values.size),
+            }
+
+        active_bin_count = int(active_mask.sum())
+        first_active_bin = int(active_indices[0])
+        last_active_bin = int(active_indices[-1])
+        span_bin_count = last_active_bin - first_active_bin + 1
+        hole_count = span_bin_count - active_bin_count
+
+        active_run_count = 0
+        longest_active_run = 0
+        run = 0
+        for is_active in active_mask.tolist():
+            if is_active:
+                run += 1
+                if run == 1:
+                    active_run_count += 1
+                longest_active_run = max(longest_active_run, run)
+            else:
+                run = 0
+
+        return {
+            "active_bin_count": active_bin_count,
+            "first_active_bin": first_active_bin,
+            "last_active_bin": last_active_bin,
+            "span_bin_count": int(span_bin_count),
+            "active_run_count": int(active_run_count),
+            "longest_active_run": int(longest_active_run),
+            "hole_count": int(hole_count),
+            "sum_abs_diff": int(sum_abs_diff),
+            "sum_active_count": int(hist[active_mask].sum()),
+            "max_bin_count": int(hist.max()),
+            "total_pixel_count": int(values.size),
+        }
+
+    def _pattern_histogram_candidate(self, features: dict[str, int]) -> tuple[bool, str]:
+        active_bin_count = features["active_bin_count"]
+        span_bin_count = features["span_bin_count"]
+        active_run_count = features["active_run_count"]
+        hole_count = features["hole_count"]
+        sum_abs_diff = features["sum_abs_diff"]
+        sum_active_count = features["sum_active_count"]
+        max_bin_count = features["max_bin_count"]
+        total_pixel_count = features["total_pixel_count"]
+
+        dense_gradient_candidate = (
+            active_bin_count >= self.cfg.pattern_dense_active_min
+            and span_bin_count >= self.cfg.pattern_dense_span_min
+            and active_run_count <= self.cfg.pattern_dense_runs_max
+            and hole_count <= self.cfg.pattern_dense_holes_max
+            and sum_abs_diff * active_bin_count * self.cfg.pattern_dense_flatness_denom
+            <= self.cfg.pattern_dense_flatness_numer * max(sum_active_count, 1)
+        )
+        if dense_gradient_candidate:
+            return True, "dense_gradient"
+
+        sparse_pattern_candidate = (
+            active_bin_count <= self.cfg.pattern_sparse_active_max
+            and max_bin_count * self.cfg.pattern_sparse_peak_denom <= total_pixel_count * self.cfg.pattern_sparse_peak_numer
+        )
+        if sparse_pattern_candidate:
+            return True, "sparse_pattern"
+
+        comb_candidate = (
+            span_bin_count >= self.cfg.pattern_comb_span_min
+            and hole_count * self.cfg.pattern_comb_hole_denom >= span_bin_count * self.cfg.pattern_comb_hole_numer
+            and active_run_count >= self.cfg.pattern_comb_runs_min
+            and max_bin_count < total_pixel_count
+        )
+        if comb_candidate:
+            return True, "comb_pattern"
+
+        return False, ""
+
+    def _detect_pattern_bypass(self, value_samples: list[int]) -> dict[str, object]:
+        if not self.cfg.pattern_bypass_enable:
+            return {"pattern_bypass": False, "pattern_bypass_reason": ""}
+
+        features = self._pattern_histogram_features(value_samples)
+        bypass_active, bypass_reason = self._pattern_histogram_candidate(features)
+        return {
+            "pattern_bypass": bypass_active,
+            "pattern_bypass_reason": bypass_reason,
+            "pattern_features": features,
+        }
 
     def _build_empty_result(self) -> FloatPercentilePwlFrameResult:
         lut = self.prev_lut[:] if self.prev_lut is not None else list(range(self.cfg.lut_size))
@@ -165,24 +300,37 @@ class FloatPercentilePwlModel:
                 "anchor_high": float(self.cfg.input_max),
                 "gain_nominal": 1.0,
                 "gain": 1.0,
+                "pattern_bypass": False,
+                "pattern_bypass_reason": "",
             },
         )
 
-    def _build_frame_result(self, luma_samples: list[int]) -> FloatPercentilePwlFrameResult:
-        if not luma_samples:
+    def _build_frame_result(self, value_samples: list[int]) -> FloatPercentilePwlFrameResult:
+        if not value_samples:
             return self._build_empty_result()
 
-        hist = compute_histogram(luma_samples, self.cfg)
-        full_hist = _build_full_histogram(luma_samples, self.cfg.input_max)
+        hist = compute_histogram(value_samples, self.cfg)
+        
+        bypass_info = self._detect_pattern_bypass(value_samples)
+        pattern_bypass = bypass_info["pattern_bypass"]
+        
+        full_hist = _build_full_histogram(value_samples, self.cfg.input_max)
         p_low = _percentile_from_histogram(full_hist, self.cfg.dark_percentile)
         p_high = _percentile_from_histogram(full_hist, self.cfg.bright_percentile)
         anchor_low, anchor_high, gain_nominal, gain = _resolve_anchor_span(p_low, p_high, self.cfg)
         knots = _build_centered_pwl_knots(anchor_low, anchor_high, self.cfg)
         curve = _expand_pwl_curve(knots, self.cfg)
+        
         raw_lut = _monotonic_clamp([round(value) for value in curve], self.cfg.input_max)
+        
+        if pattern_bypass:
+            raw_lut = list(range(self.cfg.lut_size))
+            knots = ((0, 0.0), (self.cfg.input_max, float(self.cfg.input_max)))
+            curve = [float(v) for v in raw_lut]
+
         lut = _smooth_lut(raw_lut, self.prev_lut, self.cfg)
         tone_curve = [float(value) for value in lut]
-        mapped_samples = [lut[sample] for sample in luma_samples]
+        mapped_samples = [lut[sample] for sample in value_samples]
         stats = {
             "p_low": p_low,
             "p_high": p_high,
@@ -192,6 +340,8 @@ class FloatPercentilePwlModel:
             "gain": gain,
             "output_low": float(self.cfg.toe_margin),
             "output_high": float(self.cfg.input_max) - float(self.cfg.shoulder_margin),
+            "pattern_bypass": pattern_bypass,
+            "pattern_bypass_reason": bypass_info["pattern_bypass_reason"],
         }
         self.prev_lut = lut
         return FloatPercentilePwlFrameResult(
@@ -204,7 +354,7 @@ class FloatPercentilePwlModel:
         )
 
     def process_frame(self, samples: Iterable[int]) -> FloatPercentilePwlFrameResult:
-        return self._build_frame_result(self._normalize_luma_samples(samples))
+        return self._build_frame_result(self._normalize_value_samples(samples))
 
     def process_plane_image(self, plane: np.ndarray) -> FloatPercentilePwlFrameResult:
         plane_u8 = np.asarray(plane, dtype=np.uint8)

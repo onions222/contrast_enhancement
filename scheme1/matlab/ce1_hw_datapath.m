@@ -15,8 +15,8 @@ rows = size(frame_in, 1);
 cols = size(frame_in, 2);
 total_pixels = rows * cols;
 
-% luma_u8: N x U8.0，按行优先展开后的 LUT 地址输出。
-luma_u8 = zeros(total_pixels, 1, 'uint16');
+% value_u8: N x U8.0，按行优先展开后的 LUT 地址输出。
+value_u8 = zeros(total_pixels, 1, 'uint16');
 % mapped_samples: N x U8.0，输出像素。
 mapped_samples = zeros(total_pixels, 1, 'uint16');
 % mapped_frame: rows x cols x U8.0，保留输入平面尺寸。
@@ -42,8 +42,8 @@ while row_index <= rows
             norm_sample = bitshift(norm_sample, 8 - int32(cfg.input_bit_depth));
         end
 
-        % luma_u8 按行优先顺序输出。
-        luma_u8(pixel_index) = uint16(norm_sample);
+        % value_u8 按行优先顺序输出。
+        value_u8(pixel_index) = uint16(norm_sample);
         % LUT 查表就是像素路径唯一的核心运算。
         tone_value = uint16(runtime.tone_lut(norm_sample + 1));
         mapped_samples(pixel_index) = tone_value;
@@ -56,7 +56,7 @@ while row_index <= rows
 end
 
 out = struct();
-out.luma_u8 = uint16(luma_u8(:));
+out.value_u8 = uint16(value_u8(:));
 out.mapped_samples = uint16(mapped_samples(:));
 out.mapped_frame = uint16(mapped_frame);
 out.tone_out = uint16(mapped_samples(:));

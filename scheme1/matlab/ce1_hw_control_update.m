@@ -41,7 +41,7 @@ if isfield(prev_state, 'prev_lut') && numel(prev_state.prev_lut) == 256
     prev_lut_valid = uint8(1);
 end
 
-% input_u8: N x U8.0，按行优先展开后的亮度序列。
+% input_u8: N x U8.0，按行优先展开后的 value 序列。
 input_u8 = zeros(total_pixels, 1, 'uint16');
 % histogram256: 256 x Uceil(log2(Npix+1)).0，统计 RAM。
 histogram256 = zeros(256, 1, 'uint32');
@@ -67,7 +67,7 @@ while row_index <= rows
         % 默认输入已经满足 unsigned 与位宽约束。
         raw_sample = int32(frame_in(row_index, col_index));
 
-        % norm_sample: U8.0，归一化后的亮度样本。
+        % norm_sample: U8.0，归一化后的 value 样本。
         norm_sample = raw_sample;
         if cfg.input_bit_depth > 8
             % 高位宽输入通过右移收敛到 8bit 统计域。
@@ -90,6 +90,22 @@ while row_index <= rows
     end
     row_index = row_index + 1;
 end
+
+% Stage 1.5: Pattern Bypass 检测。
+% 目的：
+%   - 在 percentile 搜索之前，先判断当前帧是否更像“人工构造 pattern”
+%   - 这类输入通常不是自然图像内容，而是工厂/OQC/bring-up 阶段使用的测试图
+%   - 对这类输入继续做 Percentile-Anchored PWL，虽然数学上可行，但工程上不希望改动其码值关系
+%   - 因此命中后直接走 identity LUT，保证输出 = 输入，避免 gray step、color bar、stripe 等 pattern 被误增强
+% 处理方式：
+%   - 使用 Stage 1 已经得到的 32-bin 粗直方图做快速判定
+%   - 只在控制路径做一次帧级判断，不进入像素主路径
+%   - 判定逻辑拆到 ce1_pattern_bypass，便于单独阅读和与硬件状态机对应
+% 输出：
+%   - pattern_bypass_flag = 1 时，当前帧不再进入 Stage 2~9 的增强控制计算
+%   - bypass_result 中保留命中特征和命中原因，便于 bring-up 阶段回看
+bypass_result = ce1_pattern_bypass(histogram32, uint32(total_pixels), cfg);
+pattern_bypass_flag = bypass_result.bypass_flag;
 
 if total_pixels <= 0
     % Stage 1b: 空帧回退。
@@ -128,6 +144,39 @@ if total_pixels <= 0
     runtime.state_out = struct('prev_lut_valid', uint8(1), 'prev_lut', uint16(tone_lut(:)));
     return;
 end
+
+% 若 pattern bypass 命中，跳过 Stage 2~9，直接使用恒等 LUT。
+if pattern_bypass_flag == uint8(1)
+    % bypass 路径的核心思想是：
+    %   - 本帧不再根据 histogram 重新生成增强曲线
+    %   - 直接把 tone_lut 设成 identity_lut
+    %   - 这样数据路径做 y = LUT[x] 时，输出码值严格等于输入码值
+    %
+    % 这里仍然填充一组完整的运行时字段，而不是只给一个 bypass_flag：
+    %   - 便于后续 datapath / 调试接口保持固定结构
+    %   - 也便于把 bypass 帧和正常增强帧放到同一条日志链路里观察
+    %
+    % temporal IIR（Stage 10）仍然保留：
+    %   - 如果上一帧是增强帧、当前帧突然命中 bypass，直接硬切到 identity LUT
+    %     可能导致帧间跳变
+    %   - 继续走 Stage 10 可以让 LUT 在时域上平滑回到 identity
+    %   - 因此 bypass 只跳过“空间控制计算”，不跳过“时域收敛”
+    p_low = uint16(0);
+    p_high = uint16(255);
+    source_span = uint16(255);
+    y_low = uint16(cfg.toe_margin);
+    y_high = uint16(cfg.input_max - cfg.shoulder_margin);
+    y_span = uint16(y_high - y_low);
+    gain_nominal_q8 = uint16(256);
+    gain_q8 = uint16(256);
+    anchor_low = uint16(0);
+    anchor_high = uint16(255);
+    required_span = uint16(255);
+    pwl_x = uint16([0; 0; 128; 255; 255]);
+    pwl_y = uint16([0; 0; 128; 255; 255]);
+    raw_lut = uint16(cfg.identity_lut(:));
+    % 跳转到 Stage 10 temporal IIR。
+else
 
 % Stage 2: 构造百分位比较目标。
 % 目的：
@@ -430,6 +479,8 @@ while level_index <= 256
     level_index = level_index + 1;
 end
 
+end  % end of if pattern_bypass_flag == 1 ... else ... end
+
 % Stage 10: temporal IIR。
 % 目的：
 %   - 降低相邻帧 LUT 抖动
@@ -479,7 +530,7 @@ while level_index <= 256
 end
 
 runtime = struct();
-% input_u8 保留扁平亮度序列。
+% input_u8 保留扁平 value 序列。
 runtime.input_u8 = uint16(input_u8(:));
 runtime.histogram = uint32(histogram32(:));
 runtime.histogram256 = uint32(histogram256(:));
@@ -502,4 +553,7 @@ runtime.tone_lut = uint16(tone_lut(:));
 runtime.monotonic_ok = monotonic_ok;
 % state_out 是下一帧唯一需要锁存的运行时状态。
 runtime.state_out = struct('prev_lut_valid', uint8(1), 'prev_lut', uint16(tone_lut(:)));
+runtime.pattern_bypass_flag = pattern_bypass_flag;
+runtime.pattern_bypass_reason = bypass_result.bypass_reason;
+runtime.pattern_features = bypass_result;
 end

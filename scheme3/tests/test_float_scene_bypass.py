@@ -88,11 +88,11 @@ def test_comb_pattern_bypasses_to_identity():
     assert np.array_equal(enhanced, plane)
 
 
-def test_color_bars_pattern_bypasses_on_rgb_path():
+def test_color_bars_pattern_stays_identity_on_rgb_path_under_v_domain():
     rgb = build_color_bars_rgb()
     result, enhanced = process_rgb(rgb)
 
-    assert result.bypass_flag is True
+    assert result.scene_name == "Bright"
     assert np.allclose(enhanced, rgb.astype(np.float32))
 
 

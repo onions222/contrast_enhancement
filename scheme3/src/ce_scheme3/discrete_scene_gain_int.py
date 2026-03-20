@@ -65,7 +65,7 @@ def _clip_to_bit_depth(value: int, bit_depth: int) -> int:
     return min(max(int(value), 0), value_max)
 
 
-def _normalize_to_luma_domain(value: int, bit_depth: int) -> int:
+def _normalize_to_value_domain(value: int, bit_depth: int) -> int:
     clipped = _clip_to_bit_depth(value, bit_depth)
     if bit_depth == 8:
         return clipped
@@ -74,11 +74,11 @@ def _normalize_to_luma_domain(value: int, bit_depth: int) -> int:
     return min(255, clipped << (8 - bit_depth))
 
 
-def _rgb_to_luma8(rgb: Sequence[int], bit_depth: int) -> int:
-    r = _normalize_to_luma_domain(int(rgb[0]), bit_depth)
-    g = _normalize_to_luma_domain(int(rgb[1]), bit_depth)
-    b = _normalize_to_luma_domain(int(rgb[2]), bit_depth)
-    return min(255, (77 * r + 150 * g + 29 * b + 128) >> 8)
+def _rgb_to_value8(rgb: Sequence[int], bit_depth: int) -> int:
+    r = _normalize_to_value_domain(int(rgb[0]), bit_depth)
+    g = _normalize_to_value_domain(int(rgb[1]), bit_depth)
+    b = _normalize_to_value_domain(int(rgb[2]), bit_depth)
+    return max(r, g, b)
 
 
 def _compute_percentile(sorted_samples: list[int], percentile: float) -> float:
@@ -96,7 +96,7 @@ def _compute_percentile(sorted_samples: list[int], percentile: float) -> float:
     return lower_value + blend * (upper_value - lower_value)
 
 
-def _summarize_luma_samples(samples: list[int]) -> dict[str, float]:
+def _summarize_value_samples(samples: list[int]) -> dict[str, float]:
     if not samples:
         return {
             "mean": 0.0,
@@ -105,8 +105,8 @@ def _summarize_luma_samples(samples: list[int]) -> dict[str, float]:
             "p2": 0.0,
             "p98": 0.0,
             "dynamic_range": 0.0,
-            "min_luma": 0.0,
-            "max_luma": 0.0,
+            "min_value": 0.0,
+            "max_value": 0.0,
         }
 
     total = len(samples)
@@ -123,8 +123,8 @@ def _summarize_luma_samples(samples: list[int]) -> dict[str, float]:
         "p2": p2,
         "p98": p98,
         "dynamic_range": p98 - p2,
-        "min_luma": float(sorted_samples[0]),
-        "max_luma": float(sorted_samples[-1]),
+        "min_value": float(sorted_samples[0]),
+        "max_value": float(sorted_samples[-1]),
     }
 
 
@@ -239,12 +239,12 @@ class DiscreteSceneGainModel:
         self._prev_mean = frame_mean
         return self._current_scene_id, False
 
-    def _normalize_luma_samples(self, samples: Iterable[int]) -> list[int]:
-        return [_normalize_to_luma_domain(sample, self.cfg.input_bit_depth) for sample in samples]
+    def _normalize_value_samples(self, samples: Iterable[int]) -> list[int]:
+        return [_normalize_to_value_domain(sample, self.cfg.input_bit_depth) for sample in samples]
 
-    def _build_frame_result(self, luma_samples: list[int]) -> DiscreteSceneFrameResult:
-        hist = compute_histogram(luma_samples, self.cfg)
-        stats = _summarize_luma_samples(luma_samples)
+    def _build_frame_result(self, value_samples: list[int]) -> DiscreteSceneFrameResult:
+        hist = compute_histogram(value_samples, self.cfg)
+        stats = _summarize_value_samples(value_samples)
         bypass_flag = stats["dynamic_range"] <= self.cfg.bypass_dynamic_range_threshold
         raw_scene_id = self._classify_scene(stats)
         scene_id, scene_cut = self._select_scene(raw_scene_id, stats["mean"])
@@ -257,8 +257,8 @@ class DiscreteSceneGainModel:
             tone_lut = self._scene_tone_luts[scene_id]
             gain_lut = self._scene_gain_luts[scene_id]
 
-        mapped_samples = [tone_lut[sample] for sample in luma_samples]
-        gain_samples = [gain_lut[sample] for sample in luma_samples]
+        mapped_samples = [tone_lut[sample] for sample in value_samples]
+        gain_samples = [gain_lut[sample] for sample in value_samples]
         return DiscreteSceneFrameResult(
             histogram=hist,
             lut=tone_lut,
@@ -274,8 +274,8 @@ class DiscreteSceneGainModel:
         )
 
     def process_frame(self, samples: Iterable[int]) -> DiscreteSceneFrameResult:
-        luma_samples = self._normalize_luma_samples(samples)
-        return self._build_frame_result(luma_samples)
+        value_samples = self._normalize_value_samples(samples)
+        return self._build_frame_result(value_samples)
 
     def process_rgb_frame(
         self,
@@ -288,8 +288,8 @@ class DiscreteSceneGainModel:
             tuple(_clip_to_bit_depth(int(channel), self.cfg.input_bit_depth) for channel in sample[:3])
             for sample in rgb_samples
         ]
-        luma_samples = [_rgb_to_luma8(sample, self.cfg.input_bit_depth) for sample in rgb_list]
-        frame_result = self._build_frame_result(luma_samples)
+        value_samples = [_rgb_to_value8(sample, self.cfg.input_bit_depth) for sample in rgb_list]
+        frame_result = self._build_frame_result(value_samples)
         gain_mode_enabled = cabc_enabled or aie_enabled
         rgb_out: list[tuple[int, int, int]] | None = None
 
@@ -315,4 +315,3 @@ class DiscreteSceneGainModel:
             gain_mode_enabled=gain_mode_enabled,
             rgb_out=rgb_out,
         )
-

@@ -1,7 +1,7 @@
 function runtime = ce_hw_control_update(frame_in, cfg, prev_state)
 %CE_HW_CONTROL_UPDATE 帧级控制路径更新函数。
 % 职责：
-%   1. 将输入样本统一归一化到 Y_8 统计域
+%   1. 将输入样本统一归一化到 V_8 统计域
 %   2. 计算 mean / dark_ratio / bright_ratio / dynamic_range
 %   3. 执行 bypass 判定、scene 判决、scene hold / scene-cut 逻辑
 %   4. 生成 tone_lut(U8.0) 和 gain_lut(U1.10)
@@ -12,7 +12,7 @@ function runtime = ce_hw_control_update(frame_in, cfg, prev_state)
 %
 % 输入参数：
 %   - frame_in: Nx1 或 Nx3 整数数组
-%       * Nx1 时：视为亮度样本，U8.0 或 U10.0
+%       * Nx1 时：视为 value 样本，U8.0 或 U10.0
 %       * Nx3 时：视为 RGB 输入，单通道 U8.0 或 U10.0
 %   - cfg: 配置 struct，关键位宽见 ce_hw_config
 %   - prev_state: 上一帧状态 struct
@@ -23,7 +23,7 @@ function runtime = ce_hw_control_update(frame_in, cfg, prev_state)
 %
 % 输出参数：
 %   - runtime: struct
-%       * luma_u8         : U8.0
+%       * value_u8        : U8.0
 %       * histogram       : 32-bin 计数数组
 %       * raw_scene_id    : 2 bit
 %       * scene_id        : 2 bit
@@ -49,14 +49,14 @@ if nargin < 3 || isempty(prev_state)
 end
 
 if size(frame_in, 2) == 3
-    % luma_u8: U8.0，scene 统计与 gain 索引统一域。
-    luma_u8 = ce_hw_helpers('rgb_to_luma8', frame_in, cfg.input_bit_depth);
+    % value_u8: U8.0，scene 统计与 gain 索引统一域。
+    value_u8 = ce_hw_helpers('rgb_to_value8', frame_in, cfg.input_bit_depth);
 else
-    luma_u8 = ce_hw_helpers('normalize_to_u8', frame_in(:), cfg.input_bit_depth);
+    value_u8 = ce_hw_helpers('normalize_to_u8', frame_in(:), cfg.input_bit_depth);
 end
 
 % stats 为控制路径统计量：mean/dark_ratio/bright_ratio 目前保留浮点外壳。
-stats = ce_hw_helpers('summarize_luma', luma_u8);
+stats = ce_hw_helpers('summarize_value', value_u8);
 % bypass_flag: 1 bit 控制标志。
 bypass_flag = stats.dynamic_range <= cfg.bypass_dynamic_range_threshold;
 % raw_scene_id: 2 bit，未经过 temporal hold 的瞬时 scene 结果。
@@ -125,9 +125,9 @@ else
 end
 
 runtime = struct();
-runtime.luma_u8 = uint8(luma_u8(:));
+runtime.value_u8 = uint8(value_u8(:));
 % histogram: 32 bin 统计结果，位宽取决于像素总数；MATLAB 里用 double 数组承载。
-runtime.histogram = histcounts(double(runtime.luma_u8), 0:8:256);
+runtime.histogram = histcounts(double(runtime.value_u8), 0:8:256);
 runtime.stats = stats;
 runtime.bypass_flag = logical(bypass_flag);
 runtime.raw_scene_id = uint8(raw_scene_id);

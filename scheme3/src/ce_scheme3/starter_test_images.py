@@ -7,11 +7,11 @@ import numpy as np
 from PIL import Image
 
 from ce_scheme3.dataset_manifest_builder import ManifestEntry, export_manifest_csv, export_selected_subset
-from ce_scheme3.image_io import rgb_to_luma
+from ce_scheme3.image_io import rgb_to_value
 from ce_scheme3.metrics import summarize_plane
 
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_RAW_ROOT = REPO_ROOT / "data" / "raw" / "starter_synth_v1"
 DEFAULT_MANIFEST_PATH = REPO_ROOT / "data" / "derived" / "manifests" / "2026-03-17-starter_synth_v1_manifest.csv"
 DEFAULT_EVAL_SUBSET_ROOT = REPO_ROOT / "data" / "derived" / "eval_subsets"
@@ -368,6 +368,303 @@ def _build_named_color_bars(width: int, height: int, *, pattern_name: str, orien
     return _build_segmented_bars(width, height, colors=patterns[pattern_name], orientation=orientation)
 
 
+# ---------------------------------------------------------------------------
+# DDIC safety test image builders
+# ---------------------------------------------------------------------------
+
+
+def _build_pure_black(width: int, height: int) -> np.ndarray:
+    return np.zeros((height, width, 3), dtype=np.uint8)
+
+
+def _build_pure_white(width: int, height: int) -> np.ndarray:
+    return np.full((height, width, 3), 255, dtype=np.uint8)
+
+
+def _build_pure_gray_128(width: int, height: int) -> np.ndarray:
+    return np.full((height, width, 3), 128, dtype=np.uint8)
+
+
+def _build_near_black_uniform(width: int, height: int) -> np.ndarray:
+    return np.full((height, width, 3), 2, dtype=np.uint8)
+
+
+def _build_near_white_uniform(width: int, height: int) -> np.ndarray:
+    return np.full((height, width, 3), 253, dtype=np.uint8)
+
+
+def _build_dc_offset_1(width: int, height: int) -> np.ndarray:
+    image = np.full((height, width, 3), 127, dtype=np.uint8)
+    image[: height // 2] = 128
+    return image
+
+
+def _build_flat_with_single_hot_pixel(width: int, height: int) -> np.ndarray:
+    image = np.full((height, width, 3), 128, dtype=np.uint8)
+    cy, cx = height // 2, width // 2
+    image[cy, cx] = (255, 255, 255)
+    return image
+
+
+def _build_flat_with_single_dead_pixel(width: int, height: int) -> np.ndarray:
+    image = np.full((height, width, 3), 128, dtype=np.uint8)
+    cy, cx = height // 2, width // 2
+    image[cy, cx] = (0, 0, 0)
+    return image
+
+
+def _build_flat_with_border_artifact(width: int, height: int) -> np.ndarray:
+    image = np.full((height, width, 3), 128, dtype=np.uint8)
+    image[0, :] = 0
+    image[-1, :] = 0
+    return image
+
+
+def _build_near_flat_with_sparse_noise(width: int, height: int) -> np.ndarray:
+    rng = np.random.default_rng(42)
+    image = np.full((height, width, 3), 120, dtype=np.uint8)
+    noise = rng.integers(-1, 2, size=(height, width, 3))
+    image = np.clip(image.astype(np.int16) + noise, 119, 121).astype(np.uint8)
+    count = max(1, int(round(height * width * 0.001)))
+    indices = rng.choice(height * width, size=count, replace=False)
+    flat = image.reshape(-1, 3)
+    flat[indices] = (200, 200, 200)
+    return image
+
+
+def _build_smpte_bars(width: int, height: int) -> np.ndarray:
+    colors_top = [
+        (192, 192, 192),
+        (192, 192, 0),
+        (0, 192, 192),
+        (0, 192, 0),
+        (192, 0, 192),
+        (192, 0, 0),
+        (0, 0, 192),
+    ]
+    colors_mid = [
+        (0, 0, 192),
+        (19, 19, 19),
+        (192, 0, 192),
+        (19, 19, 19),
+        (0, 192, 192),
+        (19, 19, 19),
+        (192, 192, 192),
+    ]
+    colors_bot = [
+        (0, 29, 67),
+        (255, 255, 255),
+        (41, 0, 62),
+        (0, 0, 0),
+        (0, 0, 0),
+        (0, 0, 0),
+        (0, 0, 0),
+    ]
+    image = np.zeros((height, width, 3), dtype=np.uint8)
+    h_top = int(height * 0.67)
+    h_mid = int(height * 0.08)
+    stripe = max(width // 7, 1)
+    for i, color in enumerate(colors_top):
+        x0 = i * stripe
+        x1 = width if i == 6 else (i + 1) * stripe
+        _fill_rect(image, x0, 0, x1, h_top, color)
+    for i, color in enumerate(colors_mid):
+        x0 = i * stripe
+        x1 = width if i == 6 else (i + 1) * stripe
+        _fill_rect(image, x0, h_top, x1, h_top + h_mid, color)
+    bot_stripe = max(width // 7, 1)
+    for i, color in enumerate(colors_bot):
+        x0 = i * bot_stripe
+        x1 = width if i == 6 else (i + 1) * bot_stripe
+        _fill_rect(image, x0, h_top + h_mid, x1, height, color)
+    return image
+
+
+def _build_vertical_stripe_bw(width: int, height: int) -> np.ndarray:
+    cols = np.arange(width) % 2
+    plane = (cols * 255).astype(np.uint8)
+    return _neutral_rgb_from_plane(np.tile(plane, (height, 1)))
+
+
+def _build_horizontal_stripe_bw(width: int, height: int) -> np.ndarray:
+    rows = np.arange(height) % 2
+    plane = (rows[:, None] * 255).astype(np.uint8)
+    return _neutral_rgb_from_plane(np.tile(plane, (1, width)))
+
+
+def _build_dot_matrix(width: int, height: int) -> np.ndarray:
+    row_idx = np.arange(height) % 4
+    col_idx = np.arange(width) % 4
+    mask = (row_idx[:, None] == 0) & (col_idx[None, :] == 0)
+    plane = np.where(mask, 255, 0).astype(np.uint8)
+    return _neutral_rgb_from_plane(plane)
+
+
+def _build_cross_hatch(width: int, height: int) -> np.ndarray:
+    row_idx = np.arange(height) % 8
+    col_idx = np.arange(width) % 8
+    mask = (row_idx[:, None] == 0) | (col_idx[None, :] == 0)
+    plane = np.where(mask, 255, 0).astype(np.uint8)
+    return _neutral_rgb_from_plane(plane)
+
+
+def _build_window_pattern(width: int, height: int) -> np.ndarray:
+    image = np.zeros((height, width, 3), dtype=np.uint8)
+    margin = max(width, height) // 4
+    _fill_rect(image, margin, margin, width - margin, height - margin, (255, 255, 255))
+    return image
+
+
+def _build_reverse_window(width: int, height: int) -> np.ndarray:
+    image = np.full((height, width, 3), 255, dtype=np.uint8)
+    margin = max(width, height) // 4
+    _fill_rect(image, margin, margin, width - margin, height - margin, (0, 0, 0))
+    return image
+
+
+def _build_gray_step_wedge(width: int, height: int, *, levels: int) -> np.ndarray:
+    plane = _stepped_plane(width, height, levels, "horizontal")
+    return _neutral_rgb_from_plane(plane)
+
+
+def _build_single_primary_full(width: int, height: int, *, channel: str) -> np.ndarray:
+    image = np.zeros((height, width, 3), dtype=np.uint8)
+    ch_map = {"r": 0, "g": 1, "b": 2}
+    image[..., ch_map[channel]] = 255
+    return image
+
+
+def _build_flicker_pair_a(width: int, height: int) -> np.ndarray:
+    return np.full((height, width, 3), 128, dtype=np.uint8)
+
+
+def _build_flicker_pair_b(width: int, height: int) -> np.ndarray:
+    return np.full((height, width, 3), 130, dtype=np.uint8)
+
+
+def _build_shallow_ramp_dark(width: int, height: int) -> np.ndarray:
+    plane = _horizontal_plane(width, height, 0, 16)
+    return _neutral_rgb_from_plane(plane)
+
+
+def _build_shallow_ramp_bright(width: int, height: int) -> np.ndarray:
+    plane = _horizontal_plane(width, height, 240, 255)
+    return _neutral_rgb_from_plane(plane)
+
+
+def _build_diagonal_ramp(width: int, height: int) -> np.ndarray:
+    x = np.linspace(0.0, 1.0, num=width, dtype=np.float64)
+    y = np.linspace(0.0, 1.0, num=height, dtype=np.float64)
+    diag = (x[None, :] + y[:, None]) / 2.0
+    plane = np.clip(np.round(diag * 255), 0, 255).astype(np.uint8)
+    return _neutral_rgb_from_plane(plane)
+
+
+def _build_circular_gradient(width: int, height: int) -> np.ndarray:
+    cx, cy = width / 2.0, height / 2.0
+    x = np.arange(width, dtype=np.float64) - cx
+    y = np.arange(height, dtype=np.float64) - cy
+    dist = np.sqrt(x[None, :] ** 2 + y[:, None] ** 2)
+    max_dist = max(np.sqrt(cx ** 2 + cy ** 2), 1.0)
+    plane = np.clip(np.round(dist / max_dist * 255), 0, 255).astype(np.uint8)
+    return _neutral_rgb_from_plane(plane)
+
+
+def _build_max_code_all_channels(width: int, height: int) -> np.ndarray:
+    return np.full((height, width, 3), 255, dtype=np.uint8)
+
+
+def _build_gain_stress_dark_cluster(width: int, height: int) -> np.ndarray:
+    rng = np.random.default_rng(99)
+    values = rng.integers(1, 4, size=(height, width), dtype=np.uint8)
+    return _neutral_rgb_from_plane(values)
+
+
+def _build_alternating_0_255(width: int, height: int) -> np.ndarray:
+    row = np.arange(width) % 2
+    col = np.arange(height) % 2
+    mask = (row[None, :] + col[:, None]) % 2
+    plane = (mask * 255).astype(np.uint8)
+    return _neutral_rgb_from_plane(plane)
+
+
+# ---------------------------------------------------------------------------
+# DDIC spatial-pattern test image builders
+# ---------------------------------------------------------------------------
+
+
+def _build_multi_stripe_bw(width: int, height: int, *, stripe_width: int) -> np.ndarray:
+    cols = (np.arange(width) // stripe_width) % 2
+    plane = (cols * 255).astype(np.uint8)
+    return _neutral_rgb_from_plane(np.tile(plane, (height, 1)))
+
+
+def _build_concentric_boxes(width: int, height: int) -> np.ndarray:
+    plane = np.zeros((height, width), dtype=np.uint8)
+    rings = max(min(width, height) // 16, 2)
+    for i in range(rings):
+        margin_y = int(i * height / (2 * rings))
+        margin_x = int(i * width / (2 * rings))
+        value = int(i * 255 / max(rings - 1, 1))
+        plane[margin_y : height - margin_y, margin_x : width - margin_x] = value
+    return _neutral_rgb_from_plane(plane)
+
+
+def _build_zone_plate(width: int, height: int) -> np.ndarray:
+    x = np.linspace(-1.0, 1.0, num=width, dtype=np.float64)
+    y = np.linspace(-1.0, 1.0, num=height, dtype=np.float64)
+    r2 = x[None, :] ** 2 + y[:, None] ** 2
+    plane = np.clip(np.round(127.5 + 127.5 * np.cos(40.0 * r2)), 0, 255).astype(np.uint8)
+    return _neutral_rgb_from_plane(plane)
+
+
+def _build_bayer_dither(width: int, height: int) -> np.ndarray:
+    bayer_4x4 = np.array(
+        [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]],
+        dtype=np.uint8,
+    )
+    tile_h = (height + 3) // 4
+    tile_w = (width + 3) // 4
+    plane = np.tile(bayer_4x4, (tile_h, tile_w))[:height, :width] * 16
+    plane = np.clip(plane, 0, 255).astype(np.uint8)
+    return _neutral_rgb_from_plane(plane)
+
+
+def _build_uniform_noise(width: int, height: int) -> np.ndarray:
+    rng = np.random.default_rng(77)
+    plane = rng.integers(0, 256, size=(height, width), dtype=np.uint8)
+    return _neutral_rgb_from_plane(plane)
+
+
+def _build_gradient_with_stripes(width: int, height: int) -> np.ndarray:
+    base = np.tile(np.linspace(0, 255, width, dtype=np.uint8), (height, 1))
+    stripes = ((np.arange(height) // 4) % 2 * 30)[:, None]
+    plane = np.clip(base.astype(np.int16) + stripes, 0, 255).astype(np.uint8)
+    return _neutral_rgb_from_plane(plane)
+
+
+def _build_radial_spokes(width: int, height: int) -> np.ndarray:
+    cx, cy = width / 2.0, height / 2.0
+    x = np.arange(width, dtype=np.float64) - cx
+    y = np.arange(height, dtype=np.float64) - cy
+    angle = np.arctan2(y[:, None], x[None, :])
+    spoke_count = 12
+    plane = ((angle / (2.0 * np.pi / spoke_count)).astype(int) % 2 * 255).astype(np.uint8)
+    return _neutral_rgb_from_plane(plane)
+
+
+def _build_text_lines_dark(width: int, height: int) -> np.ndarray:
+    plane = np.zeros((height, width), dtype=np.uint8)
+    margin_x = max(width // 12, 2)
+    line_height = 3
+    spacing = max(height // 10, 6)
+    y = spacing
+    while y + line_height < height:
+        plane[y : y + line_height, margin_x : width - margin_x] = 200
+        y += spacing
+    return _neutral_rgb_from_plane(plane)
+
+
 IMAGE_BUILDERS = {
     "high_key_window": _build_high_key_window,
     "high_key_document": _build_high_key_document,
@@ -394,6 +691,53 @@ IMAGE_BUILDERS = {
     "text_ui_light_page": _build_text_ui_light,
     "hard_shadow_scene": _build_hard_shadow,
     "color_bars_soft": _build_color_bars,
+    # DDIC safety: pure color / extreme low DR boundary
+    "pure_black": _build_pure_black,
+    "pure_white": _build_pure_white,
+    "pure_gray_128": _build_pure_gray_128,
+    "near_black_uniform": _build_near_black_uniform,
+    "near_white_uniform": _build_near_white_uniform,
+    "dc_offset_1": _build_dc_offset_1,
+    # DDIC safety: anomaly pixels
+    "flat_hot_pixel": _build_flat_with_single_hot_pixel,
+    "flat_dead_pixel": _build_flat_with_single_dead_pixel,
+    "flat_border_artifact": _build_flat_with_border_artifact,
+    "near_flat_sparse_noise": _build_near_flat_with_sparse_noise,
+    # DDIC safety: factory patterns
+    "smpte_bars": _build_smpte_bars,
+    "vertical_stripe_bw": _build_vertical_stripe_bw,
+    "horizontal_stripe_bw": _build_horizontal_stripe_bw,
+    "dot_matrix": _build_dot_matrix,
+    "cross_hatch": _build_cross_hatch,
+    "window_pattern": _build_window_pattern,
+    "reverse_window": _build_reverse_window,
+    "gray_step_wedge_16": lambda w, h: _build_gray_step_wedge(w, h, levels=16),
+    "gray_step_wedge_64": lambda w, h: _build_gray_step_wedge(w, h, levels=64),
+    "single_primary_r": lambda w, h: _build_single_primary_full(w, h, channel="r"),
+    "single_primary_g": lambda w, h: _build_single_primary_full(w, h, channel="g"),
+    "single_primary_b": lambda w, h: _build_single_primary_full(w, h, channel="b"),
+    "flicker_pair_a": _build_flicker_pair_a,
+    "flicker_pair_b": _build_flicker_pair_b,
+    # DDIC safety: banding sensitive
+    "shallow_ramp_dark": _build_shallow_ramp_dark,
+    "shallow_ramp_bright": _build_shallow_ramp_bright,
+    "diagonal_ramp": _build_diagonal_ramp,
+    "circular_gradient": _build_circular_gradient,
+    # DDIC safety: overflow / boundary stress
+    "max_code_all_channels": _build_max_code_all_channels,
+    "gain_stress_dark_cluster": _build_gain_stress_dark_cluster,
+    "alternating_0_255": _build_alternating_0_255,
+    # DDIC spatial-pattern characterization
+    "stripe_bw_3px": lambda w, h: _build_multi_stripe_bw(w, h, stripe_width=3),
+    "stripe_bw_5px": lambda w, h: _build_multi_stripe_bw(w, h, stripe_width=5),
+    "stripe_bw_8px": lambda w, h: _build_multi_stripe_bw(w, h, stripe_width=8),
+    "concentric_boxes": _build_concentric_boxes,
+    "zone_plate": _build_zone_plate,
+    "bayer_dither": _build_bayer_dither,
+    "uniform_noise": _build_uniform_noise,
+    "gradient_with_stripes": _build_gradient_with_stripes,
+    "radial_spokes": _build_radial_spokes,
+    "text_lines_dark": _build_text_lines_dark,
 }
 
 
@@ -598,6 +942,344 @@ STARTER_IMAGE_SPECS = [
         notes="Soft color bars for RGB path sanity checks.",
         builder_name="color_bars_soft",
     ),
+    # --- DDIC safety: pure color / extreme low DR boundary ---
+    StarterImageSpec(
+        filename="ddic_pure_black.png",
+        scene_tag="ddic_boundary",
+        difficulty_tags=("pure_color", "zero_dr", "ddic_safety"),
+        expected_failure_modes=("nonzero_output", "bypass_miss"),
+        notes="All-zero frame for power-on / standby safety. Must bypass to exact identity.",
+        builder_name="pure_black",
+    ),
+    StarterImageSpec(
+        filename="ddic_pure_white.png",
+        scene_tag="ddic_boundary",
+        difficulty_tags=("pure_color", "zero_dr", "ddic_safety"),
+        expected_failure_modes=("clipping", "bypass_miss"),
+        notes="All-255 frame. Must bypass to exact identity.",
+        builder_name="pure_white",
+    ),
+    StarterImageSpec(
+        filename="ddic_pure_gray_128.png",
+        scene_tag="ddic_boundary",
+        difficulty_tags=("pure_color", "zero_dr", "ddic_safety"),
+        expected_failure_modes=("bypass_miss",),
+        notes="Uniform mid-gray with zero dynamic range.",
+        builder_name="pure_gray_128",
+    ),
+    StarterImageSpec(
+        filename="ddic_near_black_uniform.png",
+        scene_tag="ddic_boundary",
+        difficulty_tags=("pure_color", "zero_dr", "ddic_safety", "low_light"),
+        expected_failure_modes=("noise_boost", "bypass_miss"),
+        notes="Near-black R=G=B=2 frame. Must bypass without amplifying code values.",
+        builder_name="near_black_uniform",
+    ),
+    StarterImageSpec(
+        filename="ddic_near_white_uniform.png",
+        scene_tag="ddic_boundary",
+        difficulty_tags=("pure_color", "zero_dr", "ddic_safety", "bright_dominant"),
+        expected_failure_modes=("clipping", "bypass_miss"),
+        notes="Near-white R=G=B=253 frame. Must bypass without compressing code values.",
+        builder_name="near_white_uniform",
+    ),
+    StarterImageSpec(
+        filename="ddic_dc_offset_1.png",
+        scene_tag="ddic_boundary",
+        difficulty_tags=("minimal_dr", "ddic_safety"),
+        expected_failure_modes=("bypass_miss", "over_enhancement"),
+        notes="DR=1 frame (127 vs 128) at bypass threshold boundary.",
+        builder_name="dc_offset_1",
+    ),
+    # --- DDIC safety: anomaly pixels on flat background ---
+    StarterImageSpec(
+        filename="ddic_flat_hot_pixel.png",
+        scene_tag="ddic_boundary",
+        difficulty_tags=("anomaly_pixel", "ddic_safety"),
+        expected_failure_modes=("noise_boost", "over_enhancement"),
+        notes="Flat 128 with single hot pixel at 255. Verifies single-outlier does not trigger enhancement.",
+        builder_name="flat_hot_pixel",
+    ),
+    StarterImageSpec(
+        filename="ddic_flat_dead_pixel.png",
+        scene_tag="ddic_boundary",
+        difficulty_tags=("anomaly_pixel", "ddic_safety"),
+        expected_failure_modes=("noise_boost", "over_enhancement"),
+        notes="Flat 128 with single dead pixel at 0.",
+        builder_name="flat_dead_pixel",
+    ),
+    StarterImageSpec(
+        filename="ddic_flat_border_artifact.png",
+        scene_tag="ddic_boundary",
+        difficulty_tags=("border_artifact", "ddic_safety"),
+        expected_failure_modes=("noise_boost", "over_enhancement"),
+        notes="Flat 128 with top and bottom rows at 0, simulating display black border.",
+        builder_name="flat_border_artifact",
+    ),
+    StarterImageSpec(
+        filename="ddic_near_flat_sparse_noise.png",
+        scene_tag="ddic_boundary",
+        difficulty_tags=("sparse_outlier", "ddic_safety"),
+        expected_failure_modes=("noise_boost", "over_enhancement"),
+        notes="Near-flat 120 ± 1 with 0.1% sparse bright outliers at 200.",
+        builder_name="near_flat_sparse_noise",
+    ),
+    # --- DDIC safety: factory / OQC test patterns ---
+    StarterImageSpec(
+        filename="ddic_smpte_bars.png",
+        scene_tag="ddic_factory",
+        difficulty_tags=("factory_pattern", "ddic_safety", "color_bars"),
+        expected_failure_modes=("pattern_enhancement", "color_shift"),
+        notes="SMPTE color bars standard pattern. Must be bypassed to prevent factory test NG.",
+        builder_name="smpte_bars",
+    ),
+    StarterImageSpec(
+        filename="ddic_vertical_stripe_bw.png",
+        scene_tag="ddic_factory",
+        difficulty_tags=("factory_pattern", "ddic_safety", "stripe"),
+        expected_failure_modes=("pattern_enhancement",),
+        notes="1-pixel black/white vertical stripes for crosstalk / line defect test.",
+        builder_name="vertical_stripe_bw",
+    ),
+    StarterImageSpec(
+        filename="ddic_horizontal_stripe_bw.png",
+        scene_tag="ddic_factory",
+        difficulty_tags=("factory_pattern", "ddic_safety", "stripe"),
+        expected_failure_modes=("pattern_enhancement",),
+        notes="1-pixel black/white horizontal stripes.",
+        builder_name="horizontal_stripe_bw",
+    ),
+    StarterImageSpec(
+        filename="ddic_dot_matrix.png",
+        scene_tag="ddic_factory",
+        difficulty_tags=("factory_pattern", "ddic_safety", "periodic"),
+        expected_failure_modes=("pattern_enhancement",),
+        notes="Regular 4x4 dot matrix for pixel defect inspection.",
+        builder_name="dot_matrix",
+    ),
+    StarterImageSpec(
+        filename="ddic_cross_hatch.png",
+        scene_tag="ddic_factory",
+        difficulty_tags=("factory_pattern", "ddic_safety", "periodic"),
+        expected_failure_modes=("pattern_enhancement",),
+        notes="8-pixel period cross-hatch grid pattern.",
+        builder_name="cross_hatch",
+    ),
+    StarterImageSpec(
+        filename="ddic_window_pattern.png",
+        scene_tag="ddic_factory",
+        difficulty_tags=("factory_pattern", "ddic_safety", "window"),
+        expected_failure_modes=("pattern_enhancement", "halo"),
+        notes="White center window on black background, standard display uniformity test.",
+        builder_name="window_pattern",
+    ),
+    StarterImageSpec(
+        filename="ddic_reverse_window.png",
+        scene_tag="ddic_factory",
+        difficulty_tags=("factory_pattern", "ddic_safety", "window"),
+        expected_failure_modes=("pattern_enhancement", "halo"),
+        notes="Black center window on white background.",
+        builder_name="reverse_window",
+    ),
+    StarterImageSpec(
+        filename="ddic_gray_step_wedge_16.png",
+        scene_tag="ddic_factory",
+        difficulty_tags=("factory_pattern", "ddic_safety", "step_wedge"),
+        expected_failure_modes=("banding", "pattern_enhancement"),
+        notes="16-level gray step wedge for gamma verification.",
+        builder_name="gray_step_wedge_16",
+    ),
+    StarterImageSpec(
+        filename="ddic_gray_step_wedge_64.png",
+        scene_tag="ddic_factory",
+        difficulty_tags=("factory_pattern", "ddic_safety", "step_wedge"),
+        expected_failure_modes=("banding", "pattern_enhancement"),
+        notes="64-level gray step wedge for finer gamma verification.",
+        builder_name="gray_step_wedge_64",
+    ),
+    StarterImageSpec(
+        filename="ddic_single_primary_r.png",
+        scene_tag="ddic_factory",
+        difficulty_tags=("factory_pattern", "ddic_safety", "single_primary"),
+        expected_failure_modes=("color_shift", "bypass_miss"),
+        notes="Full-screen pure red R=255 for color filter test.",
+        builder_name="single_primary_r",
+    ),
+    StarterImageSpec(
+        filename="ddic_single_primary_g.png",
+        scene_tag="ddic_factory",
+        difficulty_tags=("factory_pattern", "ddic_safety", "single_primary"),
+        expected_failure_modes=("color_shift", "bypass_miss"),
+        notes="Full-screen pure green G=255 for color filter test.",
+        builder_name="single_primary_g",
+    ),
+    StarterImageSpec(
+        filename="ddic_single_primary_b.png",
+        scene_tag="ddic_factory",
+        difficulty_tags=("factory_pattern", "ddic_safety", "single_primary"),
+        expected_failure_modes=("color_shift", "bypass_miss"),
+        notes="Full-screen pure blue B=255 for color filter test.",
+        builder_name="single_primary_b",
+    ),
+    StarterImageSpec(
+        filename="ddic_flicker_pair_a.png",
+        scene_tag="ddic_factory",
+        difficulty_tags=("factory_pattern", "ddic_safety", "flicker"),
+        expected_failure_modes=("flicker_amplification",),
+        notes="Flicker test frame A (gray 128), paired with frame B.",
+        builder_name="flicker_pair_a",
+    ),
+    StarterImageSpec(
+        filename="ddic_flicker_pair_b.png",
+        scene_tag="ddic_factory",
+        difficulty_tags=("factory_pattern", "ddic_safety", "flicker"),
+        expected_failure_modes=("flicker_amplification",),
+        notes="Flicker test frame B (gray 130), paired with frame A. Delta must not be amplified.",
+        builder_name="flicker_pair_b",
+    ),
+    # --- DDIC safety: banding sensitive regions ---
+    StarterImageSpec(
+        filename="ddic_shallow_ramp_dark.png",
+        scene_tag="ddic_banding",
+        difficulty_tags=("banding_sensitive", "ddic_safety", "low_light"),
+        expected_failure_modes=("banding", "shadow_crush"),
+        notes="Ultra-shallow ramp 0..16 in dark region where quantization banding is most visible on OLED.",
+        builder_name="shallow_ramp_dark",
+    ),
+    StarterImageSpec(
+        filename="ddic_shallow_ramp_bright.png",
+        scene_tag="ddic_banding",
+        difficulty_tags=("banding_sensitive", "ddic_safety", "bright_dominant"),
+        expected_failure_modes=("banding", "highlight_washout"),
+        notes="Ultra-shallow ramp 240..255 in highlight region.",
+        builder_name="shallow_ramp_bright",
+    ),
+    StarterImageSpec(
+        filename="ddic_diagonal_ramp.png",
+        scene_tag="ddic_banding",
+        difficulty_tags=("banding_sensitive", "ddic_safety", "smooth_gradient"),
+        expected_failure_modes=("banding",),
+        notes="45-degree diagonal gradient 0..255, sensitive to LUT staircasing.",
+        builder_name="diagonal_ramp",
+    ),
+    StarterImageSpec(
+        filename="ddic_circular_gradient.png",
+        scene_tag="ddic_banding",
+        difficulty_tags=("banding_sensitive", "ddic_safety", "smooth_gradient"),
+        expected_failure_modes=("banding",),
+        notes="Radial gradient from center, for 2D banding visibility check.",
+        builder_name="circular_gradient",
+    ),
+    # --- DDIC safety: overflow / boundary stress ---
+    StarterImageSpec(
+        filename="ddic_max_code_all_channels.png",
+        scene_tag="ddic_boundary",
+        difficulty_tags=("overflow_stress", "ddic_safety"),
+        expected_failure_modes=("overflow", "bypass_miss"),
+        notes="All channels at max code 255. Verifies gain multiplication does not overflow.",
+        builder_name="max_code_all_channels",
+    ),
+    StarterImageSpec(
+        filename="ddic_gain_stress_dark_cluster.png",
+        scene_tag="ddic_boundary",
+        difficulty_tags=("overflow_stress", "ddic_safety", "low_light"),
+        expected_failure_modes=("overflow", "gain_explosion"),
+        notes="Random 1..3 code values. Stress test for gain_lut[1]=tone[1]/1 potential overflow.",
+        builder_name="gain_stress_dark_cluster",
+    ),
+    StarterImageSpec(
+        filename="ddic_alternating_0_255.png",
+        scene_tag="ddic_boundary",
+        difficulty_tags=("overflow_stress", "ddic_safety", "extreme_histogram"),
+        expected_failure_modes=("overflow", "pattern_enhancement"),
+        notes="Checkerboard 0/255 at pixel level. Maximum histogram bimodality stress.",
+        builder_name="alternating_0_255",
+    ),
+    # --- DDIC spatial-pattern characterization ---
+    # histogram_bypass_status documented in difficulty_tags for traceability:
+    #   caught_by_sparse   = histogram has <=2 active bins, current sparse detector catches it
+    #   caught_by_comb     = histogram has regular holes, current comb detector catches it
+    #   evades_histogram   = dense histogram indistinguishable from natural scene, NOT caught
+    StarterImageSpec(
+        filename="ddic_stripe_bw_3px.png",
+        scene_tag="ddic_spatial",
+        difficulty_tags=("spatial_pattern", "ddic_safety", "stripe", "caught_by_sparse"),
+        expected_failure_modes=("pattern_enhancement",),
+        notes="3px wide B/W vertical stripes. Histogram: 2 active bins → caught by sparse detector.",
+        builder_name="stripe_bw_3px",
+    ),
+    StarterImageSpec(
+        filename="ddic_stripe_bw_5px.png",
+        scene_tag="ddic_spatial",
+        difficulty_tags=("spatial_pattern", "ddic_safety", "stripe", "caught_by_sparse"),
+        expected_failure_modes=("pattern_enhancement",),
+        notes="5px wide B/W vertical stripes. Histogram: 2 active bins → caught by sparse detector.",
+        builder_name="stripe_bw_5px",
+    ),
+    StarterImageSpec(
+        filename="ddic_stripe_bw_8px.png",
+        scene_tag="ddic_spatial",
+        difficulty_tags=("spatial_pattern", "ddic_safety", "stripe", "caught_by_sparse"),
+        expected_failure_modes=("pattern_enhancement",),
+        notes="8px wide B/W vertical stripes. Histogram: 2 active bins → caught by sparse detector.",
+        builder_name="stripe_bw_8px",
+    ),
+    StarterImageSpec(
+        filename="ddic_concentric_boxes.png",
+        scene_tag="ddic_spatial",
+        difficulty_tags=("spatial_pattern", "ddic_safety", "step_wedge", "caught_by_comb"),
+        expected_failure_modes=("pattern_enhancement", "banding"),
+        notes="Concentric rectangles at equal gray steps. Histogram: 16 active bins with 15 holes → caught by comb detector.",
+        builder_name="concentric_boxes",
+    ),
+    StarterImageSpec(
+        filename="ddic_zone_plate.png",
+        scene_tag="ddic_spatial",
+        difficulty_tags=("spatial_pattern", "ddic_safety", "frequency_sweep", "evades_histogram"),
+        expected_failure_modes=("pattern_enhancement", "banding"),
+        notes="Zone plate (concentric frequency sweep). Histogram: 32 active bins, DENSE, no holes → EVADES current bypass.",
+        builder_name="zone_plate",
+    ),
+    StarterImageSpec(
+        filename="ddic_bayer_dither.png",
+        scene_tag="ddic_spatial",
+        difficulty_tags=("spatial_pattern", "ddic_safety", "dither", "caught_by_comb"),
+        expected_failure_modes=("pattern_enhancement",),
+        notes="Bayer 4x4 ordered dither at 16 levels. Histogram: 16 active bins with 15 holes → caught by comb detector.",
+        builder_name="bayer_dither",
+    ),
+    StarterImageSpec(
+        filename="ddic_uniform_noise.png",
+        scene_tag="ddic_spatial",
+        difficulty_tags=("spatial_pattern", "ddic_safety", "noise", "evades_histogram"),
+        expected_failure_modes=("pattern_enhancement", "noise_boost"),
+        notes="Uniform random noise 0..255. Histogram: 32 active bins, flat distribution → EVADES current bypass. Looks like natural image to histogram.",
+        builder_name="uniform_noise",
+    ),
+    StarterImageSpec(
+        filename="ddic_gradient_with_stripes.png",
+        scene_tag="ddic_spatial",
+        difficulty_tags=("spatial_pattern", "ddic_safety", "composite", "evades_histogram"),
+        expected_failure_modes=("pattern_enhancement", "banding"),
+        notes="Horizontal gradient with overlaid horizontal stripes. Histogram: 32 active dense bins → EVADES current bypass.",
+        builder_name="gradient_with_stripes",
+    ),
+    StarterImageSpec(
+        filename="ddic_radial_spokes.png",
+        scene_tag="ddic_spatial",
+        difficulty_tags=("spatial_pattern", "ddic_safety", "radial", "caught_by_sparse"),
+        expected_failure_modes=("pattern_enhancement",),
+        notes="12-spoke radial B/W pattern. Histogram: 2 active bins → caught by sparse detector.",
+        builder_name="radial_spokes",
+    ),
+    StarterImageSpec(
+        filename="ddic_text_lines_dark.png",
+        scene_tag="ddic_spatial",
+        difficulty_tags=("spatial_pattern", "ddic_safety", "text_sim", "caught_by_sparse"),
+        expected_failure_modes=("pattern_enhancement", "noise_boost"),
+        notes="Dark background with repeating white text-like lines. Histogram: 2 active bins → caught by sparse detector.",
+        builder_name="text_lines_dark",
+    ),
 ]
 
 for channel in ("r", "g", "b"):
@@ -659,7 +1341,7 @@ def _render_image(spec: StarterImageSpec, width: int, height: int) -> np.ndarray
 
 
 def _build_manifest_entry(config: StarterDatasetConfig, spec: StarterImageSpec, rgb: np.ndarray) -> ManifestEntry:
-    plane = rgb_to_luma(rgb)
+    plane = rgb_to_value(rgb)
     summary = summarize_plane(plane)
     return ManifestEntry(
         dataset_id=config.dataset_id,
@@ -677,7 +1359,7 @@ def _build_manifest_entry(config: StarterDatasetConfig, spec: StarterImageSpec, 
         relative_path=spec.filename,
         width=int(rgb.shape[1]),
         height=int(rgb.shape[0]),
-        mean_luma=float(summary["mean"]),
+        mean_value=float(summary["mean"]),
         dark_ratio=float(summary["dark_ratio"]),
         bright_ratio=float(summary["bright_ratio"]),
         dynamic_range=float(summary["dynamic_range"]),

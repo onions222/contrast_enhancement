@@ -9,7 +9,7 @@ from pathlib import Path
 from ce_scheme3.dataset_manifest_builder import ManifestEntry, build_manifest_entries, export_manifest_csv
 
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_RAW_ROOT = REPO_ROOT / "data" / "raw"
 DEFAULT_MANIFEST_DIR = REPO_ROOT / "data" / "derived" / "manifests"
 DEFAULT_EVAL_SUBSET_ROOT = REPO_ROOT / "data" / "derived" / "eval_subsets"
@@ -174,19 +174,19 @@ def _bucket_candidates(entries: list[ManifestEntry], bucket_name: str) -> list[M
 
 def _sort_key(bucket_name: str, entry: ManifestEntry) -> tuple[float, ...]:
     if bucket_name == "high_key":
-        return (-entry.mean_luma, entry.dark_ratio, -entry.bright_ratio)
+        return (-entry.mean_value, entry.dark_ratio, -entry.bright_ratio)
     if bucket_name == "normal":
-        return (abs(entry.mean_luma - 128.0), abs(entry.dynamic_range - 128.0))
+        return (abs(entry.mean_value - 128.0), abs(entry.dynamic_range - 128.0))
     if bucket_name == "low_key":
-        return (entry.mean_luma, -entry.dark_ratio, -entry.dynamic_range)
+        return (entry.mean_value, -entry.dark_ratio, -entry.dynamic_range)
     if bucket_name == "low_light_noisy":
-        return (entry.mean_luma, -entry.dark_ratio, -entry.dynamic_range)
+        return (entry.mean_value, -entry.dark_ratio, -entry.dynamic_range)
     if bucket_name == "faces_skin":
-        return (-_keyword_score(entry, FACE_KEYWORDS), abs(entry.mean_luma - 144.0))
+        return (-_keyword_score(entry, FACE_KEYWORDS), abs(entry.mean_value - 144.0))
     if bucket_name == "text_ui":
-        return (-_keyword_score(entry, TEXT_KEYWORDS), abs(entry.mean_luma - 128.0))
+        return (-_keyword_score(entry, TEXT_KEYWORDS), abs(entry.mean_value - 128.0))
     if bucket_name == "gradient":
-        return (-_keyword_score(entry, GRADIENT_KEYWORDS), abs(entry.dynamic_range - 48.0), abs(entry.mean_luma - 160.0))
+        return (-_keyword_score(entry, GRADIENT_KEYWORDS), abs(entry.dynamic_range - 48.0), abs(entry.mean_value - 160.0))
     return (-entry.dynamic_range, -entry.bright_ratio, entry.dark_ratio)
 
 

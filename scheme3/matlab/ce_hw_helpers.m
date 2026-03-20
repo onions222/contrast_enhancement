@@ -25,10 +25,10 @@ switch action
         varargout{1} = local_clip_to_bit_depth(varargin{1}, varargin{2});
     case 'normalize_to_u8'
         varargout{1} = local_normalize_to_u8(varargin{1}, varargin{2});
-    case 'rgb_to_luma8'
-        varargout{1} = local_rgb_to_luma8(varargin{1}, varargin{2});
-    case 'summarize_luma'
-        varargout{1} = local_summarize_luma(varargin{1});
+    case 'rgb_to_value8'
+        varargout{1} = local_rgb_to_value8(varargin{1}, varargin{2});
+    case 'summarize_value'
+        varargout{1} = local_summarize_value(varargin{1});
     case 'pwl_curve'
         varargout{1} = local_pwl_curve(varargin{1}, varargin{2});
     case 'blend_identity_curve'
@@ -71,27 +71,27 @@ else
 end
 end
 
-function y8 = local_rgb_to_luma8(rgb, bit_depth)
-%LOCAL_RGB_TO_LUMA8 计算 Y_8 = (77R + 150G + 29B + 128) / 256。
-% 输入 rgb 通道视为 U8.0/U10.0；输出 y8 为 U8.0。
+function value8 = local_rgb_to_value8(rgb, bit_depth)
+%LOCAL_RGB_TO_VALUE8 计算 HSV 中的 V_8 = max(R_8, G_8, B_8)。
+% 输入 rgb 通道视为 U8.0/U10.0；输出 value8 为 U8.0。
 rgb_i32 = int32(rgb);
 r = int32(local_normalize_to_u8(rgb_i32(:, 1), bit_depth));
 g = int32(local_normalize_to_u8(rgb_i32(:, 2), bit_depth));
 b = int32(local_normalize_to_u8(rgb_i32(:, 3), bit_depth));
-y8 = uint8(min(idivide(77 .* r + 150 .* g + 29 .* b + 128, int32(256), 'floor'), 255));
+value8 = uint8(max(max(r, g), b));
 end
 
-function stats = local_summarize_luma(luma)
-%LOCAL_SUMMARIZE_LUMA 计算 frame 级统计量。
-% luma 输入为 U8.0；输出 stats 中 mean/ratio 保留浮点外壳用于控制路径判决。
-luma_i32 = int32(luma(:));
-if isempty(luma_i32)
+function stats = local_summarize_value(value_samples)
+%LOCAL_SUMMARIZE_VALUE 计算 frame 级统计量。
+% value_samples 输入为 U8.0；输出 stats 中 mean/ratio 保留浮点外壳用于控制路径判决。
+value_i32 = int32(value_samples(:));
+if isempty(value_i32)
     stats = struct('mean', 0.0, 'dark_ratio', 0.0, 'bright_ratio', 0.0, ...
-        'p2', 0.0, 'p98', 0.0, 'dynamic_range', 0.0, 'min_luma', 0.0, 'max_luma', 0.0);
+        'p2', 0.0, 'p98', 0.0, 'dynamic_range', 0.0, 'min_value', 0.0, 'max_value', 0.0);
     return;
 end
 
-sorted = sort(double(luma_i32));
+sorted = sort(double(value_i32));
 total = double(numel(sorted));
 stats = struct();
 stats.mean = mean(sorted);
@@ -100,8 +100,8 @@ stats.bright_ratio = sum(sorted >= 192) / total;
 stats.p2 = local_percentile(sorted, 2.0);
 stats.p98 = local_percentile(sorted, 98.0);
 stats.dynamic_range = stats.p98 - stats.p2;
-stats.min_luma = sorted(1);
-stats.max_luma = sorted(end);
+stats.min_value = sorted(1);
+stats.max_value = sorted(end);
 end
 
 function p = local_percentile(sorted_values, percentile)

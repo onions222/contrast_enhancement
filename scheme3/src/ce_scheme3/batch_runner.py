@@ -63,12 +63,12 @@ def run_batch(input_dir: Path, output_dir: Path, cfg: ContrastConfig) -> None:
             "height",
             "n_bins",
             "clip_gain",
-            "mean_in",
-            "mean_out",
-            "min_in",
-            "min_out",
-            "max_in",
-            "max_out",
+            "mean_value_in",
+            "mean_value_out",
+            "min_value_in",
+            "min_value_out",
+            "max_value_in",
+            "max_value_out",
         ]
         writer = csv.DictWriter(fh, fieldnames=fieldnames)
         writer.writeheader()

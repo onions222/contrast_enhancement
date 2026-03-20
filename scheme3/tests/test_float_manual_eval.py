@@ -76,7 +76,7 @@ def test_run_float_manual_eval_enriches_frames_from_manifest_and_reports_groups(
     manifest_csv.write_text(
         "\n".join(
             [
-                "dataset_id,source,source_url,license,local_root,split,selected_count,scene_tag,difficulty_tag,expected_failure_modes,notes,filename,relative_path,width,height,mean_luma,dark_ratio,bright_ratio,dynamic_range",
+                "dataset_id,source,source_url,license,local_root,split,selected_count,scene_tag,difficulty_tag,expected_failure_modes,notes,filename,relative_path,width,height,mean_value,dark_ratio,bright_ratio,dynamic_range",
                 f"demo,Demo,https://example.com,demo-license,{input_dir.as_posix()},test,1,high_key,bright_dominant,highlight_washout,manual note,bright.png,demo/high_key/bright.png,8,8,220,0.0,1.0,0.0",
             ]
         ),
@@ -132,7 +132,7 @@ def test_run_float_manual_eval_auto_selects_latest_manifest_when_not_explicitly_
     older.write_text(
         "\n".join(
             [
-                "dataset_id,source,source_url,license,local_root,split,selected_count,scene_tag,difficulty_tag,expected_failure_modes,notes,filename,relative_path,width,height,mean_luma,dark_ratio,bright_ratio,dynamic_range",
+                "dataset_id,source,source_url,license,local_root,split,selected_count,scene_tag,difficulty_tag,expected_failure_modes,notes,filename,relative_path,width,height,mean_value,dark_ratio,bright_ratio,dynamic_range",
                 f"demo,Demo,https://example.com,demo-license,{input_dir.as_posix()},test,1,normal,general,general_quality_regression,older,dark.png,demo/low_key/dark.png,8,8,24,1.0,0.0,0.0",
             ]
         ),
@@ -141,7 +141,7 @@ def test_run_float_manual_eval_auto_selects_latest_manifest_when_not_explicitly_
     newer.write_text(
         "\n".join(
             [
-                "dataset_id,source,source_url,license,local_root,split,selected_count,scene_tag,difficulty_tag,expected_failure_modes,notes,filename,relative_path,width,height,mean_luma,dark_ratio,bright_ratio,dynamic_range",
+                "dataset_id,source,source_url,license,local_root,split,selected_count,scene_tag,difficulty_tag,expected_failure_modes,notes,filename,relative_path,width,height,mean_value,dark_ratio,bright_ratio,dynamic_range",
                 f"demo,Demo,https://example.com,demo-license,{input_dir.as_posix()},test,1,low_key,low_light,noise_boost|shadow_crush,newer,dark.png,demo/low_key/dark.png,8,8,24,1.0,0.0,0.0",
             ]
         ),
@@ -177,7 +177,7 @@ def test_run_float_manual_eval_prefers_public_first_batch_manifest_over_raw_mani
     raw_manifest.write_text(
         "\n".join(
             [
-                "dataset_id,source,source_url,license,local_root,split,selected_count,scene_tag,difficulty_tag,expected_failure_modes,notes,filename,relative_path,width,height,mean_luma,dark_ratio,bright_ratio,dynamic_range",
+                "dataset_id,source,source_url,license,local_root,split,selected_count,scene_tag,difficulty_tag,expected_failure_modes,notes,filename,relative_path,width,height,mean_value,dark_ratio,bright_ratio,dynamic_range",
                 f"demo,Demo,https://example.com,demo-license,{input_dir.as_posix()},test,1,normal,general,general_quality_regression,raw,sample.png,demo/normal/sample.png,8,8,120,0.0,0.0,0.0",
             ]
         ),
@@ -186,7 +186,7 @@ def test_run_float_manual_eval_prefers_public_first_batch_manifest_over_raw_mani
     public_manifest.write_text(
         "\n".join(
             [
-                "dataset_id,source,source_url,license,local_root,split,selected_count,scene_tag,difficulty_tag,expected_failure_modes,notes,filename,relative_path,width,height,mean_luma,dark_ratio,bright_ratio,dynamic_range",
+                "dataset_id,source,source_url,license,local_root,split,selected_count,scene_tag,difficulty_tag,expected_failure_modes,notes,filename,relative_path,width,height,mean_value,dark_ratio,bright_ratio,dynamic_range",
                 f"demo,Demo,https://example.com,demo-license,{input_dir.as_posix()},test,1,normal,general,general_quality_regression,public,sample.png,demo/normal/sample.png,8,8,120,0.0,0.0,0.0",
             ]
         ),
@@ -222,7 +222,7 @@ def test_markdown_report_includes_risk_summary_and_representative_images(tmp_pat
     manifest_csv.write_text(
         "\n".join(
             [
-                "dataset_id,source,source_url,license,local_root,split,selected_count,scene_tag,difficulty_tag,expected_failure_modes,notes,filename,relative_path,width,height,mean_luma,dark_ratio,bright_ratio,dynamic_range",
+                "dataset_id,source,source_url,license,local_root,split,selected_count,scene_tag,difficulty_tag,expected_failure_modes,notes,filename,relative_path,width,height,mean_value,dark_ratio,bright_ratio,dynamic_range",
                 f"demo,Demo,https://example.com,demo-license,{input_dir.as_posix()},test,1,high_key,bright_dominant,highlight_washout,bright-note,bright.png,demo/high_key/bright.png,8,8,220,0.0,1.0,0.0",
                 f"demo,Demo,https://example.com,demo-license,{input_dir.as_posix()},test,1,low_key,low_light,noise_boost|shadow_crush,dark-note,dark.png,demo/low_key/dark.png,8,8,24,1.0,0.0,0.0",
             ]

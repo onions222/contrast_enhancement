@@ -111,7 +111,7 @@
 
 ### Path A - Global clip-limited CDF LUT
 - Definition:
-  - `Frame N` accumulates a global luma histogram
+  - `Frame N` accumulates a global HSV `V` histogram
   - `V blank` performs smoothing, clip-and-redistribute, CDF build, LUT expansion, monotonic clamp, and temporal IIR
   - `Frame N+1` applies a single LUT
 - Why keep it:

@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from ce_scheme1.image_io import rgb_to_luma
+from ce_scheme1.image_io import rgb_to_value
 from ce_scheme1.metrics import summarize_plane
 from ce_scheme1.percentile_pwl import FloatPercentilePwlConfig, FloatPercentilePwlModel
 from ce_scheme1.temporal_runner import SUPPORTED_EXTENSIONS
@@ -44,7 +44,7 @@ def run_float_manual_eval(cfg: FloatManualEvalConfig | None = None) -> dict[str,
     frames: list[dict[str, object]] = []
     for index, image_path in enumerate(_iter_image_paths(config.input_dir, config.recursive)):
         rgb = np.asarray(Image.open(image_path).convert("RGB"), dtype=np.uint8)
-        plane = rgb_to_luma(rgb)
+        plane = rgb_to_value(rgb)
         result = model.process_plane_image(plane)
         enhanced = np.asarray(result.mapped_samples, dtype=np.uint8).reshape(plane.shape)
         frame_summary = {

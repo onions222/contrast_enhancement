@@ -53,6 +53,48 @@ cfg.enable_temporal_smoothing = uint8(1);
 % identity_lut: 256 x U8.0，恒等 LUT ROM，运行时可直接复用。
 cfg.identity_lut = uint16(0:255);
 
+% --- Pattern Bypass 寄存器 ---
+% 这一组寄存器不参与主增强曲线的形状生成，而是作为前级保护层使用。
+% 工作顺序是：
+%   1. 先做 32-bin 粗直方图统计
+%   2. 再依据这些 pattern_* 寄存器做 dense / sparse / comb 判定
+%   3. 若命中，则本帧直接使用 identity LUT
+% 因此这组寄存器的目的不是“增强更强”，而是“人工测试图更安全”。
+%
+% pattern_bypass_enable: 1 bit 寄存器，可调，1 = 开启 pattern bypass。
+cfg.pattern_bypass_enable = uint8(1);
+% pattern_hist_bin_count: U6.0，bypass 检测使用的 bin 数，固定 32。
+cfg.pattern_hist_bin_count = uint8(32);
+% Dense gradient 检测阈值。
+% 这一路针对“bin 连续占满、起伏平缓”的规则分布。
+% 常见命中对象：full ramp、near-black ramp、near-white ramp、部分规则渐变图。
+cfg.pattern_dense_active_min = uint8(14);
+cfg.pattern_dense_span_min = uint8(16);
+cfg.pattern_dense_runs_max = uint8(2);
+cfg.pattern_dense_holes_max = uint8(2);
+% pattern_dense_flatness_numer / denom 组成 flatness 上限。
+% 当前 3/4 表示：允许一定起伏，但不允许 histogram 相邻 bin 波动过大。
+cfg.pattern_dense_flatness_numer = uint8(3);
+cfg.pattern_dense_flatness_denom = uint8(4);
+% Sparse pattern 检测阈值。
+% 这一路针对“只落在少数几个灰阶桶”的规则图。
+% 常见命中对象：SMPTE bars、gray step、color bars、少级数台阶图。
+cfg.pattern_sparse_active_max = uint8(6);
+% pattern_sparse_peak_numer / denom 用于限制单个 bin 的峰值占比。
+% 当前 2/5 表示：若最大 bin 超过总像素 40%，则不走 sparse 分支。
+% 这个限制用于避免把大面积单色自然场景都当作 sparse pattern。
+cfg.pattern_sparse_peak_numer = uint8(2);
+cfg.pattern_sparse_peak_denom = uint8(5);
+% Comb pattern 检测阈值。
+% 这一路针对“跨度大、空洞多、run 多”的梳状分布。
+% 常见命中对象：Bayer-like 周期图、step wedge、某些网格/箱线 pattern。
+cfg.pattern_comb_span_min = uint8(10);
+cfg.pattern_comb_runs_min = uint8(6);
+% pattern_comb_hole_numer / denom 组成 hole 比例下限。
+% 当前 1/3 表示：在 first~last span 内，至少约三分之一位置为空洞才认为像 comb。
+cfg.pattern_comb_hole_numer = uint8(1);
+cfg.pattern_comb_hole_denom = uint8(3);
+
 if nargin >= 1 && isstruct(varargin{1})
     override = varargin{1};
     fields = fieldnames(override);

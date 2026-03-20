@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from ce_scheme3.image_io import rgb_to_luma
+from ce_scheme3.image_io import rgb_to_value
 from ce_scheme3.metrics import summarize_plane
 from ce_scheme3.patterns import generate_pattern_suite
 from ce_scheme3.temporal_runner import SUPPORTED_EXTENSIONS
@@ -48,7 +48,7 @@ def _load_planes(cfg: FloatManualEvalConfig) -> tuple[str, list[tuple[str, str, 
             rgb = np.asarray(Image.open(image_path).convert("RGB"), dtype=np.uint8)
             relative_path = image_path.relative_to(cfg.input_dir).as_posix()
             safe_name = "__".join(Path(relative_path).parts)
-            items.append((safe_name, relative_path, rgb_to_luma(rgb)))
+            items.append((safe_name, relative_path, rgb_to_value(rgb)))
         return "image_directory", items
 
     suite = generate_pattern_suite(width=cfg.pattern_width, height=cfg.pattern_height)

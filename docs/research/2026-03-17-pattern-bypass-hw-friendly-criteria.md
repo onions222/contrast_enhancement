@@ -10,7 +10,7 @@
   - histogram-driven decision only
 - Target patterns:
   - gray ramp
-  - RGB ramp projected to luma
+  - RGB ramp projected to HSV `V`
   - gray banded pattern
   - color bars
   - comb / sawtooth / alternating-hole synthetic patterns
@@ -23,7 +23,7 @@ This document supersedes the earlier `histogram + streaming confirmation` direct
 
 The baseline rule set is now:
 
-- input: `32-bin luma histogram`
+- input: `32-bin value histogram`
 - output: `pattern_bypass_flag`
 - decision style: pure histogram classification
 
@@ -45,12 +45,12 @@ It is now framed as:
 This is an intentionally more aggressive objective.
 
 ## Histogram Representation
-Use a fixed `32-bin` luma histogram.
+Use a fixed `32-bin` value histogram.
 
-For 8-bit luma:
+For 8-bit HSV `V`:
 
 ```text
-bin_index = floor(luma / 8)
+bin_index = floor(value / 8)
 ```
 
 This is the recommended first implementation target.
@@ -172,7 +172,7 @@ The final classification is split into three classes.
 Target coverage:
 
 - gray ramp
-- RGB ramp projected to luma
+- RGB ramp projected to HSV `V`
 - continuous gradient test images
 
 Histogram shape:
@@ -407,7 +407,7 @@ Because the current project priority is high recall on synthetic patterns, optim
 ## Final Baseline Summary
 The agreed baseline is:
 
-- use `32-bin luma histogram`
+- use `32-bin value histogram`
 - use histogram-only pattern bypass
 - classify into:
   - `dense_gradient_pattern`

@@ -12,7 +12,7 @@ def _write_manifest(path: Path, input_dir: Path) -> None:
     path.write_text(
         "\n".join(
             [
-                "dataset_id,source,source_url,license,local_root,split,selected_count,scene_tag,difficulty_tag,expected_failure_modes,notes,filename,relative_path,width,height,mean_luma,dark_ratio,bright_ratio,dynamic_range",
+                "dataset_id,source,source_url,license,local_root,split,selected_count,scene_tag,difficulty_tag,expected_failure_modes,notes,filename,relative_path,width,height,mean_value,dark_ratio,bright_ratio,dynamic_range",
                 f"demo,Demo,https://example.com,demo-license,{input_dir.as_posix()},test,1,high_key,bright_dominant,highlight_washout|over_enhancement,bright sample,bright.png,demo/high_key/bright.png,12,12,235,0.0,1.0,0.0",
                 f"demo,Demo,https://example.com,demo-license,{input_dir.as_posix()},test,1,faces_skin,skin_proxy,color_shift|skin_tone_shift,skin sample,skin.png,demo/faces_skin/skin.png,12,12,151,0.0,0.0,24.0",
             ]
@@ -83,7 +83,7 @@ def test_run_float_full_eval_exports_metrics_and_high_risk_sample_details(tmp_pa
     manifest_csv.write_text(
         "\n".join(
             [
-                "dataset_id,source,source_url,license,local_root,split,selected_count,scene_tag,difficulty_tag,expected_failure_modes,notes,filename,relative_path,width,height,mean_luma,dark_ratio,bright_ratio,dynamic_range",
+                "dataset_id,source,source_url,license,local_root,split,selected_count,scene_tag,difficulty_tag,expected_failure_modes,notes,filename,relative_path,width,height,mean_value,dark_ratio,bright_ratio,dynamic_range",
                 f"demo,Demo,https://example.com,demo-license,{input_dir.as_posix()},test,1,high_key,bright_dominant,highlight_washout|over_enhancement,bright sample,bright.png,demo/high_key/bright.png,24,24,228,0.0,0.8,24.0",
                 f"demo,Demo,https://example.com,demo-license,{input_dir.as_posix()},test,1,text_ui,text_ui|low_light,color_shift|shadow_crush,text sample,text.png,demo/text_ui/text.png,24,24,42,0.8,0.0,236.0",
             ]

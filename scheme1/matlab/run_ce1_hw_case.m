@@ -38,6 +38,7 @@ disp(['source_span = ' num2str(double(runtime.source_span))]);
 disp(['gain_nominal_q8 = ' num2str(double(runtime.gain_nominal_q8))]);
 disp(['gain_q8 = ' num2str(double(runtime.gain_q8))]);
 disp(['anchor_low = ' num2str(double(runtime.anchor_low)) ', anchor_high = ' num2str(double(runtime.anchor_high))]);
+disp(['pattern_bypass = ' num2str(double(runtime.pattern_bypass_flag)) ', reason = ' runtime.pattern_bypass_reason]);
 disp(['lut0 = ' num2str(double(runtime.tone_lut(1))) ', lut255 = ' num2str(double(runtime.tone_lut(256)))]);
 disp(['monotonic_ok = ' num2str(double(runtime.monotonic_ok))]);
 disp('pwl_x =');

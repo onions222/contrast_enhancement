@@ -13,54 +13,47 @@ def analyze_image_stats(img_path, num_bins=32):
     
     # 计算 32 阶直方图
     hist, _ = np.histogram(data, bins=num_bins, range=(0, 256))
-    
-    # 阈值：忽略像素占比小于 0.05% 的桶，避免噪点干扰
-    noise_th = total_pixels * 0.0005
-    active_mask = hist > noise_th
+    threshold = total_pixels >> 10
+    active_mask = hist > threshold
     active_indices = np.where(active_mask)[0]
-    
+
     if len(active_indices) == 0:
-        return None 
-    
-    first_active = active_indices[0]
-    last_active = active_indices[-1]
-    
-    active_bin_count = len(active_indices)
-    span = last_active - first_active + 1
-    
-    runs = []
-    if active_bin_count > 0:
-        current_run = 1
-        for i in range(1, len(active_indices)):
-            if active_indices[i] == active_indices[i-1] + 1:
-                current_run += 1
-            else:
-                runs.append(current_run)
-                current_run = 1
-        runs.append(current_run)
-    
-    active_run_count = len(runs)
-    longest_run = max(runs) if runs else 0
-    hole_count = span - active_bin_count
-    
-    max_bin_val = np.max(hist)
+        return None
+
+    first_active = int(active_indices[0])
+    last_active = int(active_indices[-1])
+    active_count = int(len(active_indices))
+    span = int(last_active - first_active + 1)
+
+    connectivity_count = 0
+    for i in range(num_bins - 1):
+        if active_mask[i] and active_mask[i + 1]:
+            connectivity_count += 1
+    run_count = active_count - connectivity_count
+
+    max_bin_val = int(np.max(hist))
     max_bin_ratio = max_bin_val / total_pixels
-    # SAD 归一化到像素总数
-    sum_abs_diff = np.sum(np.abs(np.diff(hist.astype(np.float32)))) / total_pixels
-    
-    active_bins = hist[active_mask]
-    flatness = np.min(active_bins) / np.max(active_bins) if len(active_bins) > 0 else 0
+
+    bypass_reason = ""
+    if active_count <= 2:
+        bypass_reason = "uniform_sparse"
+    elif run_count * 4 > active_count:
+        bypass_reason = "disconnected_comb"
+    elif run_count == 1 and active_count >= 24 and span >= 24 and max_bin_val * 16 <= total_pixels:
+        bypass_reason = "continuous_artificial"
     
     return {
         "name": os.path.basename(img_path),
-        "active_bins": active_bin_count,
+        "active_count": active_count,
+        "connectivity_count": connectivity_count,
+        "run_count": run_count,
         "span": span,
-        "runs": active_run_count,
-        "max_run": longest_run,
-        "holes": hole_count,
+        "first_active": first_active,
+        "last_active": last_active,
+        "threshold": threshold,
+        "max_bin": max_bin_val,
         "max_ratio": round(max_bin_ratio, 3),
-        "sad": round(sum_abs_diff, 3),
-        "flat": round(flatness, 3)
+        "bypass_reason": bypass_reason if bypass_reason else "none",
     }
 
 pattern_dir = "data/raw/starter_synth_v1/*.png"
@@ -71,8 +64,12 @@ for f in sorted(files):
     if stats:
         results.append(stats)
 
-header = f"{'Filename':<40} | Act | Span | Run | MaxR | Hole | MaxRatio | SAD   | Flat"
+header = f"{'Filename':<40} | A   | C   | R   | F    | Thr | Pmax | PmaxRatio | Reason"
 print(header)
 print("-" * len(header))
 for r in results:
-    print(f"{r['name']:<40} | {r['active_bins']:<3} | {r['span']:<4} | {r['runs']:<3} | {r['max_run']:<4} | {r['holes']:<4} | {r['max_ratio']:<8} | {r['sad']:<5} | {r['flat']}")
+    print(
+        f"{r['name']:<40} | {r['active_count']:<3} | {r['connectivity_count']:<3} | "
+        f"{r['run_count']:<3} | {r['span']:<4} | {r['threshold']:<3} | {r['max_bin']:<4} | "
+        f"{r['max_ratio']:<9} | {r['bypass_reason']}"
+    )

@@ -58,6 +58,48 @@
 - `mapped_frame`
 - `mapped_samples`
 
+## RGB 回写外壳
+
+当前方案一的硬件核心只定义到：
+
+- `V` 域输入
+- `tone_lut`
+- `V_out`
+
+但在 MATLAB 图片/视频入口里，还需要把 `V` 域增强结果写回 RGB 图像。
+
+这里采用的不是 full gain 回写，而是保守混合后的 gain：
+
+```text
+gain_raw(x,y)   = V_out(x,y) / max(V_in(x,y), 1)
+gain_blend(x,y) = 1 + beta * (gain_raw(x,y) - 1)
+```
+
+其中：
+
+```text
+beta = rgb_gain_blend_q8 / 256
+```
+
+再对每个通道执行：
+
+```text
+R_out = clip(R_in * gain_blend)
+G_out = clip(G_in * gain_blend)
+B_out = clip(B_in * gain_blend)
+```
+
+这样做的原因是：
+
+- 若直接使用 full gain，即 `beta = 1`
+- 那么 `V` 域 LUT 的离散跳变会完整乘回 RGB
+- 在人脸皮肤、额头高光、平滑墙面、云层等区域，容易显成斑驳和块状
+
+因此默认采用较小的 `beta`，让：
+
+- 主增强曲线仍然可以保持正常力度
+- 但 RGB 回写不至于把局部亮度微起伏放大得过于明显
+
 ## 数据格式
 
 - 输入像素：`U8.0`
@@ -67,6 +109,7 @@
 - `dark_percentile_q8` / `bright_percentile_q8`：`U7.8`
 - `gain_min_q8` / `gain_max_q8`：`U4.8`
 - `gain_nominal_q8` / `gain_q8`：`U4.8`
+- `rgb_gain_blend_q8`：`U1.8`
 - `anchor_low` / `anchor_high`：`U8.0`
 - PWL 内部 `y`：`Q8`
 - `tone_lut`：`256 x U8.0`

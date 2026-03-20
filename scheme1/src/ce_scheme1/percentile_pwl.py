@@ -18,19 +18,12 @@ class FloatPercentilePwlConfig(ContrastConfig):
     enable_temporal_smoothing: bool = True
     pattern_bypass_enable: bool = True
     pattern_hist_bin_count: int = 32
-    pattern_dense_active_min: int = 14
-    pattern_dense_span_min: int = 16
-    pattern_dense_runs_max: int = 2
-    pattern_dense_holes_max: int = 2
-    pattern_dense_flatness_numer: int = 3
-    pattern_dense_flatness_denom: int = 4
-    pattern_sparse_active_max: int = 6
-    pattern_sparse_peak_numer: int = 2
-    pattern_sparse_peak_denom: int = 5
-    pattern_comb_span_min: int = 10
-    pattern_comb_runs_min: int = 6
-    pattern_comb_hole_numer: int = 1
-    pattern_comb_hole_denom: int = 3
+    pattern_active_threshold_shift: int = 10
+    pattern_uniform_sparse_active_max: int = 2
+    pattern_disconnected_comb_runs_mul: int = 4
+    pattern_continuous_active_min: int = 24
+    pattern_continuous_span_min: int = 24
+    pattern_continuous_peak_denom: int = 16
 
 
 @dataclass(frozen=True)
@@ -165,111 +158,86 @@ class FloatPercentilePwlModel:
     def _normalize_value_samples(self, samples: Iterable[int]) -> list[int]:
         return [_normalize_to_8bit(sample, self.cfg.input_bit_depth) for sample in samples]
 
-    def _pattern_histogram_features(self, value_samples: list[int]) -> dict[str, int]:
-        values = np.array(value_samples, dtype=np.uint8)
-        if values.size == 0:
+    def _topology_features_from_hist(self, hist: Sequence[int], total_pixels: int) -> dict[str, int]:
+        if total_pixels <= 0:
             return {
-                "active_bin_count": 0,
+                "active_count": 0,
+                "connectivity_count": 0,
+                "run_count": 0,
+                "span_count": 0,
                 "first_active_bin": 0,
                 "last_active_bin": 0,
-                "span_bin_count": 0,
-                "active_run_count": 0,
-                "longest_active_run": 0,
-                "hole_count": 0,
-                "sum_abs_diff": 0,
-                "sum_active_count": 0,
                 "max_bin_count": 0,
+                "mask": 0,
+                "threshold": 0,
                 "total_pixel_count": 0,
             }
 
-        shift = 8 - int(np.log2(self.cfg.pattern_hist_bin_count))
-        hist = np.bincount((values >> shift), minlength=self.cfg.pattern_hist_bin_count)
-        active_mask = hist > 0
-        active_indices = np.flatnonzero(active_mask)
-        sum_abs_diff = int(np.abs(np.diff(hist.astype(np.int32))).sum())
-        if active_indices.size == 0:
-            return {
-                "active_bin_count": 0,
-                "first_active_bin": 0,
-                "last_active_bin": 0,
-                "span_bin_count": 0,
-                "active_run_count": 0,
-                "longest_active_run": 0,
-                "hole_count": 0,
-                "sum_abs_diff": sum_abs_diff,
-                "sum_active_count": 0,
-                "max_bin_count": 0,
-                "total_pixel_count": int(values.size),
-            }
+        threshold = max(total_pixels >> self.cfg.pattern_active_threshold_shift, 0)
+        mask_bits = 0
+        max_bin_count = 0
+        for index, count in enumerate(hist):
+            count_i = int(count)
+            if count_i > threshold:
+                mask_bits |= 1 << index
+            if count_i > max_bin_count:
+                max_bin_count = count_i
 
-        active_bin_count = int(active_mask.sum())
-        first_active_bin = int(active_indices[0])
-        last_active_bin = int(active_indices[-1])
-        span_bin_count = last_active_bin - first_active_bin + 1
-        hole_count = span_bin_count - active_bin_count
+        active_count = mask_bits.bit_count()
+        connectivity_count = (mask_bits & ((mask_bits << 1) & ((1 << self.cfg.pattern_hist_bin_count) - 1))).bit_count()
+        run_count = active_count - connectivity_count
 
-        active_run_count = 0
-        longest_active_run = 0
-        run = 0
-        for is_active in active_mask.tolist():
-            if is_active:
-                run += 1
-                if run == 1:
-                    active_run_count += 1
-                longest_active_run = max(longest_active_run, run)
-            else:
-                run = 0
+        if active_count > 0:
+            first_active_bin = (mask_bits & -mask_bits).bit_length() - 1
+            last_active_bin = mask_bits.bit_length() - 1
+            span_count = last_active_bin - first_active_bin + 1
+        else:
+            first_active_bin = 0
+            last_active_bin = 0
+            span_count = 0
 
         return {
-            "active_bin_count": active_bin_count,
+            "active_count": active_count,
+            "connectivity_count": connectivity_count,
+            "run_count": run_count,
+            "span_count": span_count,
             "first_active_bin": first_active_bin,
             "last_active_bin": last_active_bin,
-            "span_bin_count": int(span_bin_count),
-            "active_run_count": int(active_run_count),
-            "longest_active_run": int(longest_active_run),
-            "hole_count": int(hole_count),
-            "sum_abs_diff": int(sum_abs_diff),
-            "sum_active_count": int(hist[active_mask].sum()),
-            "max_bin_count": int(hist.max()),
-            "total_pixel_count": int(values.size),
+            "max_bin_count": max_bin_count,
+            "mask": mask_bits,
+            "threshold": threshold,
+            "total_pixel_count": int(total_pixels),
         }
 
+    def _pattern_histogram_features(self, value_samples: list[int]) -> dict[str, int]:
+        values = np.array(value_samples, dtype=np.uint8)
+        if values.size == 0:
+            return self._topology_features_from_hist([0] * self.cfg.pattern_hist_bin_count, total_pixels=0)
+
+        shift = 8 - int(np.log2(self.cfg.pattern_hist_bin_count))
+        hist = np.bincount((values >> shift), minlength=self.cfg.pattern_hist_bin_count)
+        return self._topology_features_from_hist(hist.tolist(), total_pixels=int(values.size))
+
     def _pattern_histogram_candidate(self, features: dict[str, int]) -> tuple[bool, str]:
-        active_bin_count = features["active_bin_count"]
-        span_bin_count = features["span_bin_count"]
-        active_run_count = features["active_run_count"]
-        hole_count = features["hole_count"]
-        sum_abs_diff = features["sum_abs_diff"]
-        sum_active_count = features["sum_active_count"]
+        active_count = features["active_count"]
+        run_count = features["run_count"]
+        span_count = features["span_count"]
         max_bin_count = features["max_bin_count"]
         total_pixel_count = features["total_pixel_count"]
 
-        dense_gradient_candidate = (
-            active_bin_count >= self.cfg.pattern_dense_active_min
-            and span_bin_count >= self.cfg.pattern_dense_span_min
-            and active_run_count <= self.cfg.pattern_dense_runs_max
-            and hole_count <= self.cfg.pattern_dense_holes_max
-            and sum_abs_diff * active_bin_count * self.cfg.pattern_dense_flatness_denom
-            <= self.cfg.pattern_dense_flatness_numer * max(sum_active_count, 1)
-        )
-        if dense_gradient_candidate:
-            return True, "dense_gradient"
+        if active_count <= self.cfg.pattern_uniform_sparse_active_max:
+            return True, "uniform_sparse"
 
-        sparse_pattern_candidate = (
-            active_bin_count <= self.cfg.pattern_sparse_active_max
-            and max_bin_count * self.cfg.pattern_sparse_peak_denom <= total_pixel_count * self.cfg.pattern_sparse_peak_numer
-        )
-        if sparse_pattern_candidate:
-            return True, "sparse_pattern"
+        if run_count * self.cfg.pattern_disconnected_comb_runs_mul > active_count:
+            return True, "disconnected_comb"
 
-        comb_candidate = (
-            span_bin_count >= self.cfg.pattern_comb_span_min
-            and hole_count * self.cfg.pattern_comb_hole_denom >= span_bin_count * self.cfg.pattern_comb_hole_numer
-            and active_run_count >= self.cfg.pattern_comb_runs_min
-            and max_bin_count < total_pixel_count
-        )
-        if comb_candidate:
-            return True, "comb_pattern"
+        if (
+            run_count == 1
+            and active_count >= self.cfg.pattern_continuous_active_min
+            and span_count >= self.cfg.pattern_continuous_span_min
+            and max_bin_count * self.cfg.pattern_continuous_peak_denom <= total_pixel_count
+        ):
+            return True, "continuous_artificial"
 
         return False, ""
 

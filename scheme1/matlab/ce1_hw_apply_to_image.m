@@ -26,12 +26,19 @@ else
     runtime = ce1_hw_control_update(value_plane, cfg, prev_state);
     datapath = ce1_hw_datapath(value_plane, runtime, cfg);
 
-    % V_out / max(V_in, 1) 形成逐像素 gain，再乘回 RGB。
+    % V_out / max(V_in, 1) 形成逐像素 gain。
     value_out = double(datapath.mapped_frame);
     value_in = double(value_plane);
     value_in_safe = value_in;
     value_in_safe(value_in_safe == 0) = 1;
     gain_map = value_out ./ value_in_safe;
+
+    % gain_blend = 1 + beta * (gain_raw - 1)。
+    % 目的：
+    %   - 不把 V 域 LUT 的变化量 100% 直接乘回 RGB
+    %   - 对人脸皮肤、平滑高光区采用更保守的回写方式
+    beta = double(cfg.rgb_gain_blend_q8) / 256.0;
+    gain_map = 1.0 + beta * (gain_map - 1.0);
 
     rgb_out = zeros(size(image_u8), 'uint8');
     channel_index = 1;

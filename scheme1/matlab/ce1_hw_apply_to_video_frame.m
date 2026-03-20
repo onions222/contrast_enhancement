@@ -48,6 +48,11 @@ else
     value_in_safe(value_in_safe == 0) = 1;
     gain_map = value_out ./ value_in_safe;
 
+    % 使用保守的 blended gain，而不是完整的 raw gain。
+    % 这样可以减轻皮肤、平滑高光区的斑驳感。
+    beta = double(cfg.rgb_gain_blend_q8) / 256.0;
+    gain_map = 1.0 + beta * (gain_map - 1.0);
+
     % gain 再乘回 RGB，每个通道分别饱和到 U8.0。
     rgb_out = zeros(size(frame_u8), 'uint8');
     channel_index = 1;

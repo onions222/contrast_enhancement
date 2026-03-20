@@ -12,9 +12,10 @@ from ce_scheme1.reference_model import ContrastConfig, FrameResult, _monotonic_c
 class FloatPercentilePwlConfig(ContrastConfig):
     input_bit_depth: int = 8
     gain_min: float = 0.5
-    gain_max: float = 2.0
-    toe_margin: float = 12.0
-    shoulder_margin: float = 12.0
+    gain_max: float = 1.0
+    toe_margin: float = 24.0
+    shoulder_margin: float = 24.0
+    rgb_gain_blend: float = 0.25
     enable_temporal_smoothing: bool = True
     pattern_bypass_enable: bool = True
     pattern_hist_bin_count: int = 32
@@ -157,6 +158,20 @@ def _smooth_lut(lut: list[int], prev_lut: list[int] | None, cfg: FloatPercentile
         for old, new in zip(prev_lut, lut)
     ]
     return _monotonic_clamp(blended, cfg.input_max)
+
+
+def apply_value_output_to_rgb_image(
+    rgb_image: np.ndarray,
+    value_output: np.ndarray,
+    rgb_gain_blend: float,
+) -> np.ndarray:
+    rgb_u8 = np.asarray(rgb_image, dtype=np.uint8)
+    value_out = np.asarray(value_output, dtype=np.float32)
+    value_in = rgb_u8.max(axis=2).astype(np.float32)
+    gain = value_out / np.maximum(value_in, 1.0)
+    blended_gain = 1.0 + float(rgb_gain_blend) * (gain - 1.0)
+    out = np.clip(rgb_u8.astype(np.float32) * blended_gain[:, :, None], 0.0, 255.0)
+    return np.rint(out).astype(np.uint8)
 
 
 class FloatPercentilePwlModel:

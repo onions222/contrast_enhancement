@@ -1,5 +1,7 @@
 import numpy as np
 import pytest
+from pathlib import Path
+from PIL import Image
 
 
 def test_float_percentile_pwl_model_emits_monotonic_lut_and_tone_curve():
@@ -90,3 +92,61 @@ def test_float_percentile_pwl_public_module_exports_expected_symbols():
     assert hasattr(pkg, "FloatPercentilePwlConfig")
     assert hasattr(pkg, "FloatPercentilePwlFrameResult")
     assert hasattr(pkg, "FloatPercentilePwlModel")
+
+
+def test_default_config_is_more_conservative_for_skin_closeup_image():
+    from ce_scheme1.percentile_pwl import FloatPercentilePwlModel
+
+    image_path = (
+        Path("/Users/onion/Desktop/code/Contrast/data/raw/wikimedia_commons")
+        / "faces_skin_closeup_blonde_girl.jpg"
+    )
+    rgb = np.asarray(Image.open(image_path).convert("RGB"), dtype=np.uint8)
+    value_plane = rgb.max(axis=2)
+
+    row_start = int(value_plane.shape[0] * 0.32)
+    row_end = int(value_plane.shape[0] * 0.78)
+    col_start = int(value_plane.shape[1] * 0.22)
+    col_end = int(value_plane.shape[1] * 0.78)
+
+    model = FloatPercentilePwlModel()
+    result = model.process_plane_image(value_plane)
+    mapped = np.asarray(result.mapped_samples, dtype=np.uint8).reshape(value_plane.shape)
+
+    skin_crop = mapped[row_start:row_end, col_start:col_end]
+
+    assert result.stats["gain"] <= 1.0
+    assert float(skin_crop.std()) <= 46.0
+
+
+def test_rgb_gain_blend_reduces_skin_closeup_texture_amplification():
+    from ce_scheme1.percentile_pwl import (
+        FloatPercentilePwlConfig,
+        FloatPercentilePwlModel,
+        apply_value_output_to_rgb_image,
+    )
+
+    image_path = (
+        Path("/Users/onion/Desktop/code/Contrast/data/raw/wikimedia_commons")
+        / "faces_skin_closeup_blonde_girl.jpg"
+    )
+    rgb = np.asarray(Image.open(image_path).convert("RGB"), dtype=np.uint8)
+    value_plane = rgb.max(axis=2)
+
+    row_start = int(value_plane.shape[0] * 0.32)
+    row_end = int(value_plane.shape[0] * 0.78)
+    col_start = int(value_plane.shape[1] * 0.22)
+    col_end = int(value_plane.shape[1] * 0.78)
+
+    cfg = FloatPercentilePwlConfig()
+    model = FloatPercentilePwlModel(cfg)
+    result = model.process_plane_image(value_plane)
+    value_out = np.asarray(result.mapped_samples, dtype=np.uint8).reshape(value_plane.shape)
+
+    full_gain_rgb = apply_value_output_to_rgb_image(rgb, value_out, rgb_gain_blend=1.0)
+    blended_rgb = apply_value_output_to_rgb_image(rgb, value_out, rgb_gain_blend=cfg.rgb_gain_blend)
+
+    full_skin_crop = full_gain_rgb[row_start:row_end, col_start:col_end].max(axis=2)
+    blended_skin_crop = blended_rgb[row_start:row_end, col_start:col_end].max(axis=2)
+
+    assert float(blended_skin_crop.std()) < float(full_skin_crop.std()) - 1.0

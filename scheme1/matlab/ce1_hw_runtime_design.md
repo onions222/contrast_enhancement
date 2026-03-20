@@ -96,10 +96,17 @@ histogram32[input_u8 >> 3] = histogram32[input_u8 >> 3] + 1
 
 - 只基于 32-bin 粗直方图做帧级判断
 - 不引入空间卷积或局部窗口
-- 三路判定分别识别：
-  - `dense gradient`
-  - `sparse pattern`
-  - `comb pattern`
+- 先把 32-bin histogram 压缩成 32-bit `active mask`
+- 再提取统一的拓扑特征：
+  - `A`: 活跃 bin 数
+  - `C`: 相邻活跃对数
+  - `R = A - C`: 连续段数
+  - `F`: 活跃跨度
+  - `Pmax`: 最大单 bin 计数
+- 最终规则分三层：
+  - `uniform_sparse`
+  - `disconnected_comb`
+  - `continuous_artificial`
 - 任一路命中则直接输出 `pattern_bypass_flag = 1`
 
 **工程效果**
@@ -108,11 +115,40 @@ histogram32[input_u8 >> 3] = histogram32[input_u8 >> 3] + 1
 - 当前帧直接使用 `identity_lut`
 - 但时域 IIR 仍然保留，用于减轻增强帧和 bypass 帧切换时的 LUT 跳变
 
+**数学表达**
+
+```text
+mask[i] = 1, if histogram32[i] > (TotalPixels >> 10)
+mask[i] = 0, otherwise
+
+A = popcount(mask)
+C = popcount(mask & (mask << 1))
+R = A - C
+F = last_active - first_active + 1
+```
+
+规则定义：
+
+```text
+Rule 1:
+if A <= 2 -> bypass
+reason = uniform_sparse
+
+Rule 2:
+if R * 4 > A -> bypass
+reason = disconnected_comb
+
+Rule 3:
+if R == 1 and A >= 24 and F >= 24 and Pmax * 16 <= TotalPixels
+    -> bypass
+reason = continuous_artificial
+```
+
 **典型命中对象**
 
-- dense gradient: full ramp、near-black ramp、near-white ramp
-- sparse pattern: color bars、gray step、少级数 stepped ramp
-- comb pattern: Bayer-like pattern、梳状分布、部分规则网格图
+- `uniform_sparse`: pure color、near uniform、极低 DR 二级图
+- `disconnected_comb`: color bars、step16、checker、stripe、comb-like pattern
+- `continuous_artificial`: full ramp、smooth gradient、高级数 step wedge
 
 ### Step 3. 构造百分位目标并搜索 `p_low / p_high`
 

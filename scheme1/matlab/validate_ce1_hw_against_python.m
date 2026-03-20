@@ -38,7 +38,9 @@ case_index = 1;
 while case_index <= numel(cases)
     frames = cases{case_index};
     py_case = python_report.cases(case_index);
-    state = struct();
+    state = struct( ...
+        'prev_lut_valid', uint8(0), ...
+        'prev_lut', uint16(cfg.identity_lut(:)));
     frame_details = cell(numel(frames), 1);
     frame_index = 1;
     while frame_index <= numel(frames)

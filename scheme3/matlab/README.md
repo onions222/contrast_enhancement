@@ -18,6 +18,9 @@
 - `ce_hw_helpers.m`：手工定点语义和辅助计算函数
 - `run_ce_hw_case.m`：单 case 运行脚本入口
 - `run_ce_hw_batch.m`：批量 case 运行脚本入口
+- `ce_hw_apply_to_image.m`：单张图片运行外壳，负责 RGB/灰度图读入后的图像级组织
+- `run_ce_hw_image.m`：单张图片读盘、运行并保存结果
+- `run_ce_hw_folder.m`：文件夹批量读盘、运行并保存结果
 - `validate_ce_hw_against_python.m`：与 Python 风格 golden 的误差统计验证入口
 
 ## 定点规则摘要
@@ -36,6 +39,10 @@ run('scheme3/matlab/run_ce_hw_case.m');
 disp(result.scene_name);
 run('scheme3/matlab/run_ce_hw_batch.m');
 disp(summary.scene_names);
+run('scheme3/matlab/run_ce_hw_image.m');
+disp(image_result.runtime.scene_name);
+run('scheme3/matlab/run_ce_hw_folder.m');
+disp(folder_result.file_count);
 report = validate_ce_hw_against_python();
 ```
 

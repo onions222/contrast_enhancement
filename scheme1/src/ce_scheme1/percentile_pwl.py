@@ -20,10 +20,22 @@ class FloatPercentilePwlConfig(ContrastConfig):
     pattern_hist_bin_count: int = 32
     pattern_active_threshold_shift: int = 10
     pattern_uniform_sparse_active_max: int = 2
+    pattern_narrow_continuous_active_max: int = 8
+    pattern_narrow_continuous_span_max: int = 8
+    pattern_narrow_continuous_peak_denom: int = 2
     pattern_disconnected_comb_runs_mul: int = 4
     pattern_continuous_active_min: int = 24
     pattern_continuous_span_min: int = 24
     pattern_continuous_peak_denom: int = 16
+    pattern_continuous_extrema_max: int = 1
+    pattern_special_continuous_active_min: int = 24
+    pattern_special_continuous_span_min: int = 24
+    pattern_special_continuous_peak_denom: int = 12
+    pattern_special_continuous_extrema_max: int = 1
+    pattern_special_plateau_extrema_max: int = 3
+    pattern_special_plateau_diff_max: int = 256
+    pattern_special_plateau_pair_min: int = 28
+    pattern_special_edge_pair_max: int = 2
 
 
 @dataclass(frozen=True)
@@ -95,7 +107,7 @@ def _resolve_anchor_span(p_low: float, p_high: float, cfg: FloatPercentilePwlCon
     return anchor_low, anchor_high, gain_nominal, gain
 
 
-def _build_centered_pwl_knots(
+def _build_anchor_pwl_knots(
     anchor_low: float,
     anchor_high: float,
     cfg: FloatPercentilePwlConfig,
@@ -104,14 +116,11 @@ def _build_centered_pwl_knots(
     x3 = int(round(min(max(anchor_high, 0.0), cfg.input_max)))
     if x3 < x1:
         x1, x3 = x3, x1
-    mid_x = int(round((x1 + x3) / 2.0))
     y1 = float(cfg.toe_margin)
     y3 = float(cfg.input_max) - float(cfg.shoulder_margin)
-    mid_y = (y1 + y3) / 2.0
     return (
         (0, 0.0),
         (x1, y1),
-        (mid_x, mid_y),
         (x3, y3),
         (cfg.input_max, float(cfg.input_max)),
     )
@@ -168,6 +177,9 @@ class FloatPercentilePwlModel:
                 "first_active_bin": 0,
                 "last_active_bin": 0,
                 "max_bin_count": 0,
+                "extrema_count": 0,
+                "edge_pair_count": 0,
+                "plateau_pair_count": 0,
                 "mask": 0,
                 "threshold": 0,
                 "total_pixel_count": 0,
@@ -191,10 +203,31 @@ class FloatPercentilePwlModel:
             first_active_bin = (mask_bits & -mask_bits).bit_length() - 1
             last_active_bin = mask_bits.bit_length() - 1
             span_count = last_active_bin - first_active_bin + 1
+            active_hist = [int(hist[index]) for index in range(first_active_bin, last_active_bin + 1)]
         else:
             first_active_bin = 0
             last_active_bin = 0
             span_count = 0
+            active_hist = []
+
+        extrema_count = 0
+        plateau_pair_count = 0
+        edge_pair_count = 0
+        peak_half_threshold = (max_bin_count + 1) // 2
+        if active_hist:
+            for left, right in zip(active_hist, active_hist[1:]):
+                if abs(right - left) <= self.cfg.pattern_special_plateau_diff_max:
+                    plateau_pair_count += 1
+                if left >= peak_half_threshold or right >= peak_half_threshold:
+                    edge_pair_count += 1
+            for left, center, right in zip(active_hist, active_hist[1:], active_hist[2:]):
+                if (
+                    (center > left and center >= right)
+                    or (center >= left and center > right)
+                    or (center < left and center <= right)
+                    or (center <= left and center < right)
+                ):
+                    extrema_count += 1
 
         return {
             "active_count": active_count,
@@ -204,6 +237,9 @@ class FloatPercentilePwlModel:
             "first_active_bin": first_active_bin,
             "last_active_bin": last_active_bin,
             "max_bin_count": max_bin_count,
+            "extrema_count": extrema_count,
+            "edge_pair_count": edge_pair_count,
+            "plateau_pair_count": plateau_pair_count,
             "mask": mask_bits,
             "threshold": threshold,
             "total_pixel_count": int(total_pixels),
@@ -223,10 +259,21 @@ class FloatPercentilePwlModel:
         run_count = features["run_count"]
         span_count = features["span_count"]
         max_bin_count = features["max_bin_count"]
+        extrema_count = features["extrema_count"]
+        edge_pair_count = features["edge_pair_count"]
+        plateau_pair_count = features["plateau_pair_count"]
         total_pixel_count = features["total_pixel_count"]
 
         if active_count <= self.cfg.pattern_uniform_sparse_active_max:
             return True, "uniform_sparse"
+
+        if (
+            run_count == 1
+            and active_count <= self.cfg.pattern_narrow_continuous_active_max
+            and span_count <= self.cfg.pattern_narrow_continuous_span_max
+            and max_bin_count * self.cfg.pattern_narrow_continuous_peak_denom <= total_pixel_count
+        ):
+            return True, "narrow_continuous_transition"
 
         if run_count * self.cfg.pattern_disconnected_comb_runs_mul > active_count:
             return True, "disconnected_comb"
@@ -236,8 +283,22 @@ class FloatPercentilePwlModel:
             and active_count >= self.cfg.pattern_continuous_active_min
             and span_count >= self.cfg.pattern_continuous_span_min
             and max_bin_count * self.cfg.pattern_continuous_peak_denom <= total_pixel_count
+            and extrema_count <= self.cfg.pattern_continuous_extrema_max
         ):
             return True, "continuous_artificial"
+
+        if run_count == 1 and active_count >= self.cfg.pattern_special_continuous_active_min and span_count >= self.cfg.pattern_special_continuous_span_min:
+            smooth_wide_special = (
+                extrema_count <= self.cfg.pattern_special_continuous_extrema_max
+                and max_bin_count * self.cfg.pattern_special_continuous_peak_denom <= total_pixel_count
+            )
+            plateau_edge_special = (
+                extrema_count <= self.cfg.pattern_special_plateau_extrema_max
+                and plateau_pair_count >= self.cfg.pattern_special_plateau_pair_min
+                and edge_pair_count <= self.cfg.pattern_special_edge_pair_max
+            )
+            if smooth_wide_special or plateau_edge_special:
+                return True, "special_continuous_artificial"
 
         return False, ""
 
@@ -286,7 +347,7 @@ class FloatPercentilePwlModel:
         p_low = _percentile_from_histogram(full_hist, self.cfg.dark_percentile)
         p_high = _percentile_from_histogram(full_hist, self.cfg.bright_percentile)
         anchor_low, anchor_high, gain_nominal, gain = _resolve_anchor_span(p_low, p_high, self.cfg)
-        knots = _build_centered_pwl_knots(anchor_low, anchor_high, self.cfg)
+        knots = _build_anchor_pwl_knots(anchor_low, anchor_high, self.cfg)
         curve = _expand_pwl_curve(knots, self.cfg)
         
         raw_lut = _monotonic_clamp([round(value) for value in curve], self.cfg.input_max)

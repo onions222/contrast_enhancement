@@ -4,15 +4,12 @@ function runtime = ce1_hw_control_update(frame_in, cfg, prev_state)
 %   - 核心路径只使用整数运算
 %   - 不调用高层数值 built-in
 %   - 不拆 helper，关键步骤全部顺序展开
-
-if nargin < 2 || isempty(cfg)
-    % 未显式传入配置时，加载默认寄存器镜像。
-    cfg = ce1_hw_config();
-end
-if nargin < 3 || isempty(prev_state)
-    % 第一帧或独立单帧运行时，上一帧状态为空。
-    prev_state = struct();
-end
+% 接口约定：
+%   - cfg 必须由上层显式提供
+%   - prev_state 必须由上层显式提供
+%   - prev_state 固定包含：
+%       prev_lut_valid : U1.0
+%       prev_lut       : 256 x U8.0
 
 % rows / cols 直接对应图像行列计数器。
 rows = size(frame_in, 1);
@@ -25,21 +22,12 @@ total_pixels = rows * cols;
 %   - 为 temporal IIR 提供 prev_lut
 %   - 在空帧时允许直接回退到上一帧 LUT
 % 处理方式：
-%   - 若 prev_state 中不存在有效 prev_lut，则回退到 identity LUT
+%   - 若 prev_state.prev_lut_valid = 0，则回退到 identity LUT
 
 % prev_lut_valid: 1 bit 状态寄存器，来自上一帧。
-prev_lut_valid = uint8(0);
+prev_lut_valid = uint8(prev_state.prev_lut_valid);
 % prev_lut: 256 x U8.0 状态寄存器，锁存上一帧 LUT。
-prev_lut = uint16(cfg.identity_lut(:));
-if isfield(prev_state, 'prev_lut_valid')
-    % 上一帧是否已经生成过有效 LUT。
-    prev_lut_valid = uint8(prev_state.prev_lut_valid);
-end
-if isfield(prev_state, 'prev_lut') && numel(prev_state.prev_lut) == 256
-    % 若存在上一帧 LUT，则覆盖 identity 缺省值。
-    prev_lut = uint16(prev_state.prev_lut(:));
-    prev_lut_valid = uint8(1);
-end
+prev_lut = uint16(prev_state.prev_lut(:));
 
 % input_u8: N x U8.0，按行优先展开后的 value 序列。
 input_u8 = zeros(total_pixels, 1, 'uint16');
@@ -136,8 +124,8 @@ if total_pixels <= 0
     runtime.anchor_low = uint16(0);
     runtime.anchor_high = uint16(255);
     runtime.required_span = uint16(255);
-    runtime.pwl_x = uint16([0; 0; 128; 255; 255]);
-    runtime.pwl_y = uint16([0; 0; 128; 255; 255]);
+    runtime.pwl_x = uint16([0; 0; 255; 255]);
+    runtime.pwl_y = uint16([0; 0; 255; 255]);
     runtime.raw_lut = uint16(tone_lut(:));
     runtime.tone_lut = uint16(tone_lut(:));
     runtime.monotonic_ok = uint8(1);
@@ -172,8 +160,8 @@ if pattern_bypass_flag == uint8(1)
     anchor_low = uint16(0);
     anchor_high = uint16(255);
     required_span = uint16(255);
-    pwl_x = uint16([0; 0; 128; 255; 255]);
-    pwl_y = uint16([0; 0; 128; 255; 255]);
+    pwl_x = uint16([0; 0; 255; 255]);
+    pwl_y = uint16([0; 0; 255; 255]);
     raw_lut = uint16(cfg.identity_lut(:));
     % 跳转到 Stage 10 temporal IIR。
 else
@@ -337,56 +325,55 @@ else
     anchor_high = uint16(anchor_high_signed);
 end
 
-% Stage 7: 构建 5 点 PWL。
+% Stage 7: 构建 4 点 PWL。
 % 目的：
 %   - 把增强曲线压缩成硬件友好的 knot 表达
 % 说明：
 %   - x 坐标保持 U8.0
-%   - y 坐标内部保留 Q8，以保留中间 knot 的 0.5 语义
-% 5 点 PWL 控制点：U8.0，knot 可写寄存器/ROM。
+%   - 当前方案只保留 4 个 knot，不再保留中点
+%   - 因为原来的中点只是两端平均值，本质上仍落在同一条直线上
+%   - 所以删掉中点以后，曲线自由度不变，但寄存器表达更简单
+% 三段直线分别表示：
+%   - 段 0: (0, 0) -> (anchor_low, y_low)
+%   - 段 1: (anchor_low, y_low) -> (anchor_high, y_high)
+%   - 段 2: (anchor_high, y_high) -> (255, 255)
+% 其中段 1 就是主增强段：
+%   - 其斜率直接对应前面 gain / anchor 计算得到的主映射关系
+% 4 点 PWL 控制点：U8.0，knot 可写寄存器/ROM。
 x0 = uint16(0);
 y0 = uint16(0);
 x1 = anchor_low;
 y1 = y_low;
-x3 = anchor_high;
-y3 = y_high;
-% 中点 x 使用 round-to-even。
-sum_mid = int32(x1) + int32(x3);
-mid_x_signed = bitshift(sum_mid, -1);
-if bitand(sum_mid, int32(1)) ~= 0 && bitand(mid_x_signed, int32(1)) ~= 0
-    mid_x_signed = mid_x_signed + int32(1);
-end
-mid_x = uint16(mid_x_signed);
-
-% 中点 y 在内部保留 Q8 精度，因此这里先保留整数部分定义。
-sum_mid = int32(y1) + int32(y3);
-mid_y_signed = bitshift(sum_mid, -1);
-if bitand(sum_mid, int32(1)) ~= 0 && bitand(mid_y_signed, int32(1)) ~= 0
-    mid_y_signed = mid_y_signed + int32(1);
-end
-mid_y = uint16(mid_y_signed);
+x2 = anchor_high;
+y2 = y_high;
 x4 = uint16(255);
 y4 = uint16(255);
 
-pwl_x = uint16([x0; x1; mid_x; x3; x4]);
-pwl_y = uint16([y0; y1; mid_y; y3; y4]);
+pwl_x = uint16([x0; x1; x2; x4]);
+pwl_y = uint16([y0; y1; y2; y4]);
 
-% PWL y 内部使用 Q8，以保留中间 knot 的 0.5 语义。
+% PWL y 内部使用 Q8。
 % y*_q8 直接对应硬件里“坐标值 + 小数位”的内部表示。
+% 这里不再需要中点的 .5 语义，因此每个 knot 都直接由整数 y 坐标左移得到。
 y0_q8 = int64(y0) * int64(cfg.frac_one);
 y1_q8 = int64(y1) * int64(cfg.frac_one);
-mid_y_q8 = int64(int32(y1) + int32(y3)) * int64(bitshift(int32(1), int32(cfg.frac_bits - 1)));
-y3_q8 = int64(y3) * int64(cfg.frac_one);
+y2_q8 = int64(y2) * int64(cfg.frac_one);
 y4_q8 = int64(y4) * int64(cfg.frac_one);
 
 % Stage 8: 展开 PWL 得到 raw_lut。
 % 目的：
 %   - 为每个 level 生成最终 tone 映射
+% 实现方式：
+%   - 逐个 level 判断它属于哪一段直线
+%   - 在对应线段内部做一次线性插值
+%   - 内部先在 Q8 域算分子，再做一次整数除法
+%   - 最终对除法结果执行 round-to-even，得到 U8.0 LUT 码值
+% 三段对应关系：
+%   - level <= x1          -> 使用段 0
+%   - x1 < level <= x2     -> 使用段 1，也就是主增强段
+%   - level > x2           -> 使用段 2
 % 公式：
 %   y(level) = y0 + (y1 - y0) * (level - x0) / (x1 - x0)
-% 实现方式：
-%   - 内部在 Q8 域插值
-%   - 先做整数除法，再对余数执行 round-to-even
 % raw_lut: 256 x U8.0，未做 temporal 的 tone LUT。
 raw_lut = zeros(256, 1, 'uint16');
 level_index = 0;
@@ -397,42 +384,46 @@ while level_index <= 255
         seg_y0_q8 = y0_q8;
         seg_x1 = int32(x1);
         seg_y1_q8 = y1_q8;
-    elseif level_index <= int32(mid_x)
+    elseif level_index <= int32(x2)
         seg_x0 = int32(x1);
         seg_y0_q8 = y1_q8;
-        seg_x1 = int32(mid_x);
-        seg_y1_q8 = mid_y_q8;
-    elseif level_index <= int32(x3)
-        seg_x0 = int32(mid_x);
-        seg_y0_q8 = mid_y_q8;
-        seg_x1 = int32(x3);
-        seg_y1_q8 = y3_q8;
+        seg_x1 = int32(x2);
+        seg_y1_q8 = y2_q8;
     else
-        seg_x0 = int32(x3);
-        seg_y0_q8 = y3_q8;
+        seg_x0 = int32(x2);
+        seg_y0_q8 = y2_q8;
         seg_x1 = int32(x4);
         seg_y1_q8 = y4_q8;
     end
 
-    % span 为当前线段的 x 宽度，至少强制为 1。
+    % span 为当前线段的 x 宽度。
+    % 在当前 4 点结构下，正常情况下每段都应满足 seg_x1 >= seg_x0。
+    % 这里保留 span = 1 的处理，只是为了避免退化配置时出现除数为 0。
     span = seg_x1 - seg_x0;
     if span <= 0
         span = 1;
     end
     % dx 是 level 在当前线段中的相对位置。
+    % 也就是当前输入码值距离该段左端点的水平偏移。
     dx = int32(level_index) - seg_x0;
     if dx < 0
         dx = 0;
     end
     % dy_q8 为当前线段的 y 增量，保留 Q8 精度。
+    % 若当前段是主增强段，则 dy_q8 / span 就对应主段斜率。
     dy_q8 = seg_y1_q8 - seg_y0_q8;
     % 把 y = y0 + dy * dx / span 改写成统一分子形式。
+    % 这样做的目的是把整条插值关系统一收敛成：
+    %   一个分子 interp_numer
+    %   一个分母 span * 256
+    % 便于后续整数除法实现。
     interp_numer = seg_y0_q8 * int64(span) + dy_q8 * int64(dx);
 
     divisor_u = int64(span) * int64(cfg.frac_one);
     quotient_u = idivide(interp_numer, divisor_u, 'floor');
     remainder_u = interp_numer - quotient_u * divisor_u;
     % rounded_step 使用 banker rounding。
+    % 目的不是“提升视觉效果”，而是保证定点化后没有系统性上偏或下偏。
     rounded_step = quotient_u;
     twice_remainder = remainder_u + remainder_u;
     if twice_remainder > divisor_u

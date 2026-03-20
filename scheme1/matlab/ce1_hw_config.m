@@ -69,6 +69,11 @@ cfg.pattern_hist_bin_count = uint8(32);
 cfg.pattern_active_threshold_shift = uint8(10);
 % Uniform / Sparse 判定阈值：A <= 2。
 cfg.pattern_uniform_sparse_active_max = uint8(2);
+% Narrow Continuous Transition 判定阈值：
+% R == 1，且 A / F 都很小，同时 Pmax * 2 <= TotalPixels。
+cfg.pattern_narrow_continuous_active_max = uint8(8);
+cfg.pattern_narrow_continuous_span_max = uint8(8);
+cfg.pattern_narrow_continuous_peak_denom = uint8(2);
 % Disconnected / Comb 判定阈值：R * 4 > A。
 cfg.pattern_disconnected_comb_runs_mul = uint8(4);
 % Continuous Artificial 判定阈值。
@@ -76,6 +81,17 @@ cfg.pattern_continuous_active_min = uint8(24);
 cfg.pattern_continuous_span_min = uint8(24);
 % max_bin_count * 16 <= TotalPixels。
 cfg.pattern_continuous_peak_denom = uint8(16);
+% 连续宽分布主规则还要求 extrema_count 足够低。
+cfg.pattern_continuous_extrema_max = uint8(1);
+% Special Continuous Artificial 后置补充分支阈值。
+cfg.pattern_special_continuous_active_min = uint8(24);
+cfg.pattern_special_continuous_span_min = uint8(24);
+cfg.pattern_special_continuous_peak_denom = uint8(12);
+cfg.pattern_special_continuous_extrema_max = uint8(1);
+cfg.pattern_special_plateau_extrema_max = uint8(3);
+cfg.pattern_special_plateau_diff_max = uint16(256);
+cfg.pattern_special_plateau_pair_min = uint8(28);
+cfg.pattern_special_edge_pair_max = uint8(2);
 
 if nargin >= 1 && isstruct(varargin{1})
     override = varargin{1};

@@ -43,17 +43,18 @@ def test_percentile_pwl_gain_matches_formula_from_resolved_anchors():
 def test_percentile_pwl_knots_hit_expected_anchor_outputs():
     from ce_scheme1.percentile_pwl import (
         FloatPercentilePwlConfig,
-        _build_centered_pwl_knots,
+        _build_anchor_pwl_knots,
         _expand_pwl_curve,
     )
 
     cfg = FloatPercentilePwlConfig(toe_margin=10.0, shoulder_margin=14.0)
-    knots = _build_centered_pwl_knots(40.0, 180.0, cfg)
+    knots = _build_anchor_pwl_knots(40.0, 180.0, cfg)
     curve = _expand_pwl_curve(knots, cfg)
 
+    assert len(knots) == 4
     assert knots[0] == (0, 0.0)
     assert knots[1] == (40, pytest.approx(cfg.toe_margin))
-    assert knots[3] == (180, pytest.approx(cfg.input_max - cfg.shoulder_margin))
+    assert knots[2] == (180, pytest.approx(cfg.input_max - cfg.shoulder_margin))
     assert knots[-1] == (255, float(cfg.input_max))
     assert curve[40] == pytest.approx(cfg.toe_margin)
     assert curve[180] == pytest.approx(cfg.input_max - cfg.shoulder_margin)

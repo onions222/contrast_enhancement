@@ -36,8 +36,8 @@ def _export() -> dict:
             result = model.process_frame(frame)
             gain_nominal_q8 = int(math.floor(result.stats["gain_nominal"] * 256.0 + 1e-9))
             gain_q8 = int(math.floor(result.stats["gain"] * 256.0 + 1e-9))
-            anchor_low = int(result.pwl_knots[1][0]) if len(result.pwl_knots) >= 4 else 0
-            anchor_high = int(result.pwl_knots[3][0]) if len(result.pwl_knots) >= 4 else 255
+            anchor_low = int(result.pwl_knots[1][0]) if len(result.pwl_knots) >= 3 else 0
+            anchor_high = int(result.pwl_knots[2][0]) if len(result.pwl_knots) >= 3 else 255
             exported_frames.append(
                 {
                     "name": f"{case_name}_frame_{index}",

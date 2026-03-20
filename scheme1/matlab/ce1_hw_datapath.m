@@ -4,11 +4,8 @@ function out = ce1_hw_datapath(frame_in, runtime, cfg)
 %   - 方案一当前只支持灰度平面输入
 %   - 数据路径只做输入归一化和 tone LUT 查表
 %   - 默认输入数据已经满足 unsigned 与位宽约束，不再重复做防御性裁剪
-
-if nargin < 3 || isempty(cfg)
-    % 若未显式传参，则加载默认配置寄存器。
-    cfg = ce1_hw_config();
-end
+% 接口约定：
+%   - cfg 必须由上层显式提供
 
 % 行列计数用于明确对应逐像素扫描顺序。
 rows = size(frame_in, 1);

@@ -18,7 +18,7 @@
 
 1. 从整帧亮度分布里提取主体输入区间
 2. 把这个输入区间映射到留有保护边界的输出区间
-3. 用一条 5 点 PWL 曲线生成单调 `tone_lut`
+3. 用一条 4 点 PWL 曲线生成单调 `tone_lut`
 
 这样做的优点是：
 
@@ -67,7 +67,7 @@
 - `dark_percentile_q8` / `bright_percentile_q8`：`U7.8`
 - `gain_min_q8` / `gain_max_q8`：`U4.8`
 - `gain_nominal_q8` / `gain_q8`：`U4.8`
-- `anchor_low` / `anchor_high` / `mid_x`：`U8.0`
+- `anchor_low` / `anchor_high`：`U8.0`
 - PWL 内部 `y`：`Q8`
 - `tone_lut`：`256 x U8.0`
 
@@ -144,10 +144,16 @@ histogram32[input_u8 >> 3] = histogram32[input_u8 >> 3] + 1
   - `R = A - C`: 连续段数
   - `F`: 活跃跨度
   - `Pmax`: 最大单 bin 计数
-- 最终规则分三层：
+- 再补两个只服务于后置特殊分支的形状特征：
+  - `extrema_count`: 活跃区内部峰谷个数
+  - `plateau_pair_count`: 相邻 bin 对差分很小的对数
+  - `edge_pair_count`: 相邻 bin 对中至少一端接近峰值的对数
+- 最终规则分五层：
   - `uniform_sparse`
+  - `narrow_continuous_transition`
   - `disconnected_comb`
   - `continuous_artificial`
+  - `special_continuous_artificial`
 - 任一路命中则直接输出 `pattern_bypass_flag = 1`
 
 **输出语义**
@@ -182,21 +188,36 @@ Rule 1:
 if A <= 2 -> bypass
 reason = uniform_sparse
 
+Rule 1.5:
+if R == 1 and A <= 8 and F <= 8 and Pmax * 2 <= TotalPixels
+    -> bypass
+reason = narrow_continuous_transition
+
 Rule 2:
 if R * 4 > A -> bypass
 reason = disconnected_comb
 
 Rule 3:
-if R == 1 and A >= 24 and F >= 24 and Pmax * 16 <= TotalPixels
+if R == 1 and A >= 24 and F >= 24 and Pmax * 16 <= TotalPixels and extrema_count <= 1
     -> bypass
 reason = continuous_artificial
+
+Rule 4:
+if R == 1 and A >= 24 and F >= 24 and (
+       (extrema_count <= 1 and Pmax * 12 <= TotalPixels)
+    or (extrema_count <= 3 and plateau_pair_count >= 28 and edge_pair_count <= 2)
+   )
+    -> bypass
+reason = special_continuous_artificial
 ```
 
 **典型命中对象**
 
 - `uniform_sparse`: pure color、near uniform、极低 DR 二级图
+- `narrow_continuous_transition`: near-black ramp、near-white ramp、shallow ramp
 - `disconnected_comb`: color bars、step16、checker、stripe、comb-like pattern
 - `continuous_artificial`: full ramp、smooth gradient、高级数 step wedge
+- `special_continuous_artificial`: circular gradient、gradient with stripes 这类特殊连续测试图
 
 **硬件映射**
 
@@ -210,6 +231,12 @@ reason = continuous_artificial
   - 首尾活跃索引差分
 - `Pmax`
   - 32-bin max compare tree
+- `extrema_count`
+  - 活跃区内三点比较计数器
+- `plateau_pair_count`
+  - 相邻差分绝对值比较器 + 计数器
+- `edge_pair_count`
+  - 峰值半阈值比较器 + 相邻对计数器
 
 ### Step 3. 构造百分位目标并搜索 `p_low / p_high`
 
@@ -332,18 +359,17 @@ if anchor_high > 255:
     anchor_high = 255
 ```
 
-### Step 8. 构建 5 点 PWL
+### Step 8. 构建 4 点 PWL
 
 **目的**
 
 把增强曲线压缩成少量 knot，便于硬件寄存器配置和线性插值生成 LUT。
 
-**5 个点的意义**
+**4 个点的意义**
 
 - `(0, 0)`：固定起点
 - `(x1, y1)`：主工作段左锚点
-- `(mid_x, mid_y)`：中点，稳定中间调形状
-- `(x3, y3)`：主工作段右锚点
+- `(x2, y2)`：主工作段右锚点
 - `(255, 255)`：固定终点
 
 **公式**
@@ -353,23 +379,21 @@ x0 = 0
 y0 = 0
 x1 = anchor_low
 y1 = y_low
-x3 = anchor_high
-y3 = y_high
+x2 = anchor_high
+y2 = y_high
 x4 = 255
 y4 = 255
 ```
 
-中点：
-
-```text
-mid_x = round_to_even((x1 + x3) / 2)
-mid_y = (y1 + y3) / 2
-```
-
 说明：
 
-- `mid_x` 最终落在 `U8.0`
-- `mid_y` 在内部保持 `Q8`，这样能保留 `.5` 的语义
+- 当前方案里不再保留中点
+- 三段直线分别对应：
+  - `(0, 0)` 到 `(x1, y1)`：暗部保护段
+  - `(x1, y1)` 到 `(x2, y2)`：主增强段
+  - `(x2, y2)` 到 `(255, 255)`：高光保护段
+- 主增强段直接由 `(x1, y1)` 到 `(x2, y2)` 一段直线表示
+- 因为原来的中点只是两端平均值，没有增加新的形状自由度
 
 ### Step 9. 从 PWL 生成 256 点 LUT
 
@@ -380,10 +404,23 @@ mid_y = (y1 + y3) / 2
 **处理方式**
 
 - 对每个 `level in [0,255]`
-- 先判断它落在哪一段
+- 先判断它落在哪一段直线
 - 再对该段做线性插值
 - 插值内部使用 `Q8` 的 `y`
 - 最终输出时做 `round_to_even`
+
+分段选择关系：
+
+```text
+if level <= x1:
+    use segment (x0, y0) -> (x1, y1)
+elif level <= x2:
+    use segment (x1, y1) -> (x2, y2)
+else:
+    use segment (x2, y2) -> (x4, y4)
+```
+
+其中第二段就是主增强段，它的斜率直接决定主体亮度区间被拉伸或压缩的强度。
 
 **公式**
 
@@ -487,7 +524,6 @@ round_to_even(z)
 
 用于：
 
-- `mid_x`
 - PWL 展开后的 `tone_lut`
 
 这样做的原因，是为了在 `.5` 情况下保持偶数舍入，避免整条曲线整体偏高 1 个码值。

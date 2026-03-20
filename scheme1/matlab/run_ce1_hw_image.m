@@ -4,6 +4,7 @@
 %
 % 输出：
 %   - image_result: 结构体，包含输入图、V 平面、runtime、datapath、输出图
+%   - 保存到磁盘的图像为“左原图、右增强图”的双联图
 
 repo_root = fileparts(fileparts(fileparts(mfilename('fullpath'))));
 input_image_path = fullfile(repo_root, 'data', 'raw', 'wikimedia_commons', 'text_ui_talad_neon_night_market_signage.jpg');
@@ -20,12 +21,13 @@ prev_state = struct( ...
 
 input_image = imread(input_image_path);
 image_result = ce1_hw_apply_to_image(input_image, cfg, prev_state);
-imwrite(image_result.output_image, output_image_path);
+compare_image = ce1_hw_make_compare_image(input_image, image_result.output_image);
+imwrite(compare_image, output_image_path);
 
 disp('scheme1 single-image run');
 disp(['input_image_path = ' input_image_path]);
 disp(['output_image_path = ' output_image_path]);
 disp(['pattern_bypass = ' num2str(double(image_result.runtime.pattern_bypass_flag)) ...
     ', reason = ' image_result.runtime.pattern_bypass_reason]);
-disp(['rows = ' num2str(size(image_result.output_image, 1)) ...
-    ', cols = ' num2str(size(image_result.output_image, 2))]);
+disp(['rows = ' num2str(size(compare_image, 1)) ...
+    ', cols = ' num2str(size(compare_image, 2))]);

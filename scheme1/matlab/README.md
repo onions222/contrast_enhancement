@@ -12,12 +12,14 @@
   像素级查表路径：只做灰度查表和输出饱和。
 - `ce1_hw_apply_to_image.m`
   单张图片运行外壳：读取图像矩阵，在 V 域统计后把增强结果写回灰度图或 RGB 图。
+- `ce1_hw_make_compare_image.m`
+  把原图和增强图拼接成“左原图、右增强图”的双联图，用于磁盘保存。
 - `ce1_hw_apply_to_video_frame.m`
   单帧视频图像运行外壳：在 V 域统计，并把 `runtime.state_out` 交给视频入口做跨帧传递。
 - `run_ce1_hw_image.m`
-  单张图片读盘、运行并保存结果。
+  单张图片读盘、运行并保存双联图结果。
 - `run_ce1_hw_folder.m`
-  读取文件夹内图片，批量运行并保存到输出目录。
+  读取文件夹内图片，批量运行并保存双联图结果到输出目录。
 - `run_ce1_hw_video.m`
   读取单个视频文件，按帧顺序运行并保存增强后视频。
 - `validate_ce1_hw_against_python.m`
@@ -53,5 +55,6 @@ disp(report.all_pass);
 
 - 本目录不依赖 `scheme3/matlab/`
 - `run_ce1_hw_image.m` 和 `run_ce1_hw_folder.m` 是逐图独立处理
+- 这两个图片入口保存的是双联图：左侧原图，右侧增强图
 - `run_ce1_hw_video.m` 会在整段视频内连续传递 `prev_state`
 - 验证脚本入口位于 [export_percentile_pwl_reference.py](/Users/onion/Desktop/code/Contrast/scheme1/eval/export_percentile_pwl_reference.py)

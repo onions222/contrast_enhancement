@@ -4,6 +4,7 @@
 %
 % 输出：
 %   - folder_result: 结构体，包含输入目录、输出目录、文件数和逐文件摘要
+%   - 每张保存图像均为“左原图、右增强图”的双联图
 
 repo_root = fileparts(fileparts(fileparts(mfilename('fullpath'))));
 input_folder = fullfile(repo_root, 'data', 'raw', 'starter_synth_v1');
@@ -44,7 +45,8 @@ while file_index <= numel(file_list)
 
     input_image = imread(input_path);
     image_result = ce1_hw_apply_to_image(input_image, cfg, prev_state);
-    imwrite(image_result.output_image, output_path);
+    compare_image = ce1_hw_make_compare_image(input_image, image_result.output_image);
+    imwrite(compare_image, output_path);
 
     folder_result.files{file_index} = struct( ...
         'input_path', input_path, ...
